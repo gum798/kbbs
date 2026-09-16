@@ -74,8 +74,10 @@ struct PendingLedger {
         return transcript.reduce(0) { $0 + (normalise($1.body) == needle ? 1 : 0) }
     }
 
-    /// KakaoTalk trims what it is given.
+    /// Whitespace is not preserved on the round trip — KakaoTalk trims, and a line break
+    /// can come back as a space — so every run of it collapses to one before comparing.
+    /// Anything stricter left a two-line message at [미확인] while it sat on screen.
     private static func normalise(_ body: String) -> String {
-        body.trimmingCharacters(in: .whitespacesAndNewlines)
+        body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 }

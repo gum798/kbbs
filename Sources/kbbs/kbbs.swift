@@ -38,6 +38,7 @@ struct Kbbs: ParsableCommand {
             CloseCommand.self,
             OpenCommand.self,
             KeysCommand.self,
+            ProbeMenuCommand.self,
         ]
     )
 

@@ -132,7 +132,9 @@ enum RoomScreen {
     private static func pendingLines(_ entry: PendingLedger.Entry) -> [String] {
         let marker = entry.state == .sending ? "[전송중]" : "[미확인]"
         let budget = Col.body - Width.cells(marker) - 1
-        let wrapped = Width.wrap(entry.body, to: max(1, budget))
+        let wrapped = entry.body
+            .components(separatedBy: "\n")
+            .flatMap { Width.wrap($0, to: max(1, budget)) }
         return wrapped.enumerated().map { index, text in
             let isLast = index == wrapped.count - 1
             let content = isLast ? Width.pad(text, to: budget) + " " + marker : text

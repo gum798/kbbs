@@ -76,8 +76,18 @@ struct Sender {
             clear(composer)
             throw Failure.injectionNotReflected(readBack: readBack.count)
         }
-        // The last point at which aborting is still safe.
-        guard button.isEnabled else {
+        // The last point at which aborting is still safe, so waiting here costs nothing:
+        // a window opened a moment ago has been seen to take a beat before KakaoTalk
+        // enables its own button.
+        var enabled = button.isEnabled
+        if !enabled {
+            let deadline = Date().addingTimeInterval(0.6)
+            while !enabled, Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.1)
+                enabled = button.isEnabled
+            }
+        }
+        guard enabled else {
             clear(composer)
             throw Failure.sendButtonDisabled
         }

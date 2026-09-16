@@ -92,4 +92,32 @@ final class PendingLedgerTests: XCTestCase {
         ledger.reconcile(against: [message("안녕")], now: Date())
         XCTAssertTrue(ledger.entries.isEmpty)
     }
+    // MARK: - Multi-line messages
+
+    /// A message sent with a line break came back from the transcript as confirmed-never:
+    /// KakaoTalk and the reader between them do not preserve the exact whitespace, so an
+    /// exact comparison of a two-line message never matched and it sat at [미확인] while
+    /// plainly visible on screen.
+    func testALineBreakDoesNotStopTheMatch() {
+        var ledger = PendingLedger()
+        ledger.add(body: "서버가 못버티나\n어디서버 썻드라", transcript: [])
+        ledger.reconcile(against: [message("서버가 못버티나 어디서버 썻드라")], now: Date())
+        XCTAssertTrue(ledger.entries.isEmpty, "a two-line message was never confirmed")
+    }
+
+    func testTheMatchSurvivesWhitespaceBeingReflowed() {
+        var ledger = PendingLedger()
+        ledger.add(body: "첫줄\n둘째줄", transcript: [])
+        ledger.reconcile(against: [message("첫줄\n 둘째줄")], now: Date())
+        XCTAssertTrue(ledger.entries.isEmpty)
+    }
+
+    /// Two genuinely different messages must not be merged by the looser comparison.
+    func testDifferentTextStillDoesNotMatch() {
+        var ledger = PendingLedger()
+        ledger.add(body: "첫줄\n둘째줄", transcript: [])
+        ledger.reconcile(against: [message("첫줄 셋째줄")], now: Date())
+        XCTAssertEqual(ledger.entries.count, 1)
+    }
+
 }
