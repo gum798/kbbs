@@ -36,16 +36,9 @@ struct Kbbs: ParsableCommand {
             """,
         version: BuildVersion.current,
         subcommands: [
-            AuthCommand.self,
-            StatusCommand.self,
             InspectCommand.self,
-            ChatsCommand.self,
-            SendCommand.self,
-            ReadCommand.self,
-            WatchCommand.self,
-            CacheCommand.self,
         ],
-        defaultSubcommand: StatusCommand.self
+        defaultSubcommand: InspectCommand.self
     )
 
     static func main() {
