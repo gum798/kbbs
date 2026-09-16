@@ -58,12 +58,20 @@ struct Loop {
     private let readLimit: Int
     private let demoRescan: (() -> [Room])?
 
-    init(rooms: [Room], link: LinkState, worker: AXWorker?, readLimit: Int = 60, demoRescan: (() -> [Room])? = nil) {
+    init(
+        rooms: [Room],
+        link: LinkState,
+        worker: AXWorker?,
+        readLimit: Int = 60,
+        source: ListSource = .chatList,
+        demoRescan: (() -> [Room])? = nil
+    ) {
         self.worker = worker
         self.readLimit = readLimit
         self.demoRescan = demoRescan
         list.rooms = rooms
         list.link = link
+        list.source = source
         nextListPoll = Date().addingTimeInterval(Self.listPoll)
     }
 
@@ -115,12 +123,13 @@ struct Loop {
 
     private mutating func apply(_ result: AXResult) {
         switch result {
-        case .list(let rooms, let elapsed):
+        case .list(let rooms, let source, let elapsed):
             list.rooms = rooms
+            list.source = source
             list.page = min(list.page, list.pageCount - 1)
             list.cursor = min(list.cursor, max(0, list.roomsOnPage - 1))
             list.link = .live(lastRefresh: Date())
-            say(String(format: "%d개 · %.1f초", rooms.count, elapsed))
+            say(String(format: "%d개 · %.1f초", rooms.count, elapsed) + (source == .chatList ? "" : " · 열린 창만"))
             nextListPoll = Date().addingTimeInterval(Self.listPoll)
 
         case .opened(let token, let title, let matched, let elapsed):

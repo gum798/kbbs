@@ -60,6 +60,10 @@ struct ListState {
     var link: LinkState = .connecting
     var clock = Date()
 
+    /// Where these rooms came from. The status row says so when it is not the chat list,
+    /// because otherwise empty columns read as a scraper that half-worked.
+    var source: ListSource = .chatList
+
     /// Set while the user is being asked whether to let kbbs open a room's window.
     var confirm: ConfirmBox?
 

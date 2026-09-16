@@ -193,7 +193,8 @@ enum ListScreen {
         case .live(let at): refreshed = Theme.clock(at)
         default: refreshed = "--:--:--"
         }
-        let left = "  전체 \(total)개 / \(lo)-\(hi) (\(state.page + 1)/\(state.pageCount) 쪽)"
+        let origin = state.source == .openWindowsOnly ? " · 열린 창만" : ""
+        let left = "  전체 \(total)개\(origin) / \(lo)-\(hi) (\(state.page + 1)/\(state.pageCount) 쪽)"
             + " / 갱신 \(refreshed) / *=창열림 -=창없음"
         let badge = badgeText(state.link) + "  "
         let fill = max(1, inner - Width.cells(left) - Width.cells(badge))

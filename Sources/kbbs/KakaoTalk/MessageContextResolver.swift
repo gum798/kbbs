@@ -61,6 +61,16 @@ struct MessageContextResolver {
             return cachedInput
         }
 
+        // Shallow first. The composer sits two levels down — window → scroll area → text
+        // area — while the transcript's 120-odd rows sit one level further and soak up
+        // any breadth-first node budget before it can get there. Walking the window's own
+        // children by hand finds it in about a tenth of the time the general search takes.
+        if let input = shallowComposer(in: chatWindow) {
+            runner.log("read: input shallow hit role='\(input.role ?? "unknown")'")
+            rememberCachedElement(slot: .messageInput, root: chatWindow, element: input)
+            return input
+        }
+
         if let focusedElement = kakao.applicationElement.focusedUIElement {
             let focusedCandidates = collectFocusedElementLineageCandidates(focusedElement)
             runner.log("read: input fast path focused candidates=\(focusedCandidates.count)")
@@ -314,13 +324,15 @@ struct MessageContextResolver {
 
     private func collectMessageInputCandidates(from root: UIElement, limit: Int = 80) -> [UIElement] {
         let nodeBudget = max(200, limit * 4)
+        // Not `isEnabled`: KakaoTalk omits AXEnabled on its own composer, so asking for
+        // enabled elements excluded the one element this whole function exists to find.
         let roleCandidates = root.findAll(where: { element in
-            guard element.isEnabled else { return false }
+            guard !element.isExplicitlyDisabled else { return false }
             return element.role == kAXTextAreaRole || element.role == kAXTextFieldRole
         }, limit: limit, maxNodes: nodeBudget)
 
         let editableCandidates = root.findAll(where: { element in
-            guard element.isEnabled else { return false }
+            guard !element.isExplicitlyDisabled else { return false }
             let editable: Bool = element.attributeOptional(kAXEditableAttribute) ?? false
             guard editable else { return false }
             let role = element.role ?? ""
@@ -349,11 +361,40 @@ struct MessageContextResolver {
         return candidates
     }
 
-    private func pickMessageInputField(from fields: [UIElement], in window: UIElement) -> UIElement? {
-        fields.sorted { lhs, rhs in
-            scoreMessageInputCandidate(lhs, in: window) > scoreMessageInputCandidate(rhs, in: window)
+    /// The composer, found by looking only where it actually lives.
+    ///
+    /// The window's direct children and the direct children of each of those. That is
+    /// two levels and a few dozen reads, and it deliberately never descends into the
+    /// transcript, whose rows are themselves text areas and would both slow the search
+    /// down and compete for the answer.
+    private func shallowComposer(in chatWindow: UIElement) -> UIElement? {
+        var candidates: [UIElement] = []
+        for child in chatWindow.children.prefix(40) {
+            if isLikelyMessageInputElement(child, in: chatWindow) {
+                candidates.append(child)
+            }
+            guard child.role == kAXScrollAreaRole || child.role == kAXGroupRole else { continue }
+            for grandchild in child.children.prefix(12) where isLikelyMessageInputElement(grandchild, in: chatWindow) {
+                candidates.append(grandchild)
+            }
         }
-        .first
+        return pickMessageInputField(from: candidates, in: chatWindow)
+    }
+
+    /// The best candidate that is actually a plausible message input, or nil.
+    ///
+    /// It used to rank the candidates and take the first, with no test that the winner
+    /// could be an input at all. Whatever KakaoTalk happened to have focused came along
+    /// in the candidate lineage, so on a window where the transcript had focus this
+    /// returned the transcript's AXTable — and then injection wrote into a table, reads
+    /// filtered rows against a table's frame, and nothing said anything was wrong.
+    private func pickMessageInputField(from fields: [UIElement], in window: UIElement) -> UIElement? {
+        fields
+            .filter { isLikelyMessageInputElement($0, in: window) }
+            .sorted { lhs, rhs in
+                scoreMessageInputCandidate(lhs, in: window) > scoreMessageInputCandidate(rhs, in: window)
+            }
+            .first
     }
 
     private func scoreMessageInputCandidate(_ element: UIElement, in window: UIElement) -> Double {
@@ -398,7 +439,7 @@ struct MessageContextResolver {
     }
 
     private func isLikelyMessageInputElement(_ element: UIElement, in window: UIElement? = nil) -> Bool {
-        guard element.isEnabled else { return false }
+        guard !element.isExplicitlyDisabled else { return false }
         let role = element.role ?? ""
         if role == kAXTextAreaRole {
             return true

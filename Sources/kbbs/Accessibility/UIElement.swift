@@ -123,6 +123,16 @@ public final class UIElement: @unchecked Sendable {
         attributeOptional(kAXEnabledAttribute) ?? false
     }
 
+    /// Whether the element says it is disabled, as opposed to not saying anything.
+    ///
+    /// KakaoTalk omits `AXEnabled` on most of its tree — its chat windows and its own
+    /// message composer both come back with no value at all. Reading "absent" as
+    /// "disabled", which `isEnabled` does, therefore rejects the very elements this
+    /// program needs. Only an explicit false is a refusal.
+    public var isExplicitlyDisabled: Bool {
+        (attributeOptional(kAXEnabledAttribute) as Bool?) == false
+    }
+
     public var isFocused: Bool {
         attributeOptional(kAXFocusedAttribute) ?? false
     }

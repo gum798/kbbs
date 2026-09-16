@@ -360,4 +360,20 @@ extension ListScreenTests {
         for row in plain(ListScreen.render(s).render()) { print(row) }
     }
 
+    // MARK: - A list built from windows rather than from the chat list
+
+    /// The columns are empty in this mode, so the status row has to say why — otherwise
+    /// it reads as a scraper that half-worked.
+    func testTheStatusRowSaysWhenTheListIsOnlyOpenWindows() {
+        var s = state(3)
+        s.source = .openWindowsOnly
+        let rows = plain(ListScreen.render(s).render())
+        XCTAssertTrue(rows[19].contains("열린 창"), rows[19])
+    }
+
+    func testTheOrdinaryListSaysNoSuchThing() {
+        let rows = plain(ListScreen.render(state(3)).render())
+        XCTAssertFalse(rows[19].contains("열린 창"), rows[19])
+    }
+
 }

@@ -17,7 +17,7 @@ enum AXJob: Sendable {
 
 /// A finished job, reduced to things that are safe to hand to the main thread.
 enum AXResult: Sendable {
-    case list(rooms: [Room], elapsed: TimeInterval)
+    case list(rooms: [Room], source: ListSource, elapsed: TimeInterval)
     case opened(token: Int, title: String, matchedTitle: String, elapsed: TimeInterval)
     case read(token: Int, snapshot: TranscriptSnapshot, elapsed: TimeInterval)
     case noWindow(title: String, candidates: [String])
@@ -218,21 +218,36 @@ final class AXWorker: @unchecked Sendable {
     private func perform(_ job: AXJob, started: Date) -> AXResult {
         switch job {
         case .scanList(let limit):
-            guard let listWindow else { return .failed(reason: "대화목록 창이 없습니다") }
-            let found = scanner.scan(in: listWindow, limit: limit, trace: nil)
-            guard !found.isEmpty else { return .failed(reason: "대화방을 하나도 읽지 못했습니다") }
-            rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
-            let open = Set(kakao.windows.compactMap { $0.title })
-            let rooms = found.map { item in
-                Room(
-                    title: item.discovery.title,
-                    lastMessage: item.discovery.lastMessage,
-                    timeLabel: item.discovery.timeLabel,
-                    unreadCount: item.discovery.unreadCount,
-                    hasWindow: Kbbs.hasOpenWindow(item.discovery.title, among: open, listWindow: listWindow.title)
-                )
+            // The chat list window can be closed at any moment — closing it does not quit
+            // KakaoTalk — so a refresh that assumed it was still there would empty the
+            // board index the moment the user closed one window.
+            let window = listWindow ?? kakao.chatListWindow.flatMap { candidate in
+                candidate.role == kAXWindowRole ? candidate : nil
             }
-            return .list(rooms: rooms, elapsed: Date().timeIntervalSince(started))
+            let found = window.map { scanner.scan(in: $0, limit: limit, trace: nil) } ?? []
+
+            if !found.isEmpty, let window {
+                rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
+                let open = Set(kakao.windows.compactMap { $0.title })
+                let rooms = found.map { item in
+                    Room(
+                        title: item.discovery.title,
+                        lastMessage: item.discovery.lastMessage,
+                        timeLabel: item.discovery.timeLabel,
+                        unreadCount: item.discovery.unreadCount,
+                        hasWindow: Kbbs.hasOpenWindow(item.discovery.title, among: open, listWindow: window.title)
+                    )
+                }
+                return .list(rooms: rooms, source: .chatList, elapsed: Date().timeIntervalSince(started))
+            }
+
+            rows = [:]
+            let fallback = RoomList.fromOpenWindows(
+                titles: kakao.windows.compactMap { $0.role == kAXWindowRole ? $0.title : nil },
+                listWindowTitle: window?.title ?? "카카오톡"
+            )
+            guard !fallback.isEmpty else { return .failed(reason: "카카오톡 창이 하나도 열려 있지 않습니다") }
+            return .list(rooms: fallback, source: .openWindowsOnly, elapsed: Date().timeIntervalSince(started))
 
         case .openRoom(let title):
             do {

@@ -816,6 +816,51 @@ precheck(입력창 비었고 안정) → `setAttribute` 주입 → 정확 일치
 화면에 12줄만 보이는데 62행을 읽을 이유가 없다. 다만 이건 유지 코어를 건드리는 일이라
 M3 뒤로 미룬다.
 
+### A1 2단계 실측 — 전역 Return 은 필요 없다 (2026-09-16)
+
+`kbbs probe-send "…"` 로 확인. 아무것도 보내지 않는 경로다.
+
+```
+입력창   role=AXTextArea  actions=AXShowMenu
+주입     setAttribute(kAXValueAttribute, …) → 되읽기 정확히 일치
+전송버튼 활성: 꺼짐 → 켜짐
+```
+
+**AX 주입만으로 「전송」 버튼이 켜진다.** 카카오톡이 자기 텍스트 변경 알림으로 버튼을
+굴릴 것이라던 우려는 틀렸다. 따라서 §5 전송 상태기계에서 다음이 전부 불필요하다:
+
+- 전역 HID Return (`pressEnterKey`)
+- `activateForSend()` 와 포커스 게이트
+- 자판 잠금(`InputMode.locked`)과 `notFrontmost` · `wrongWindow` 실패 모드
+- 전송할 때마다 화면이 번쩍이는 문제 자체
+
+남는 것: precheck(입력창 비었고 안정) → 주입 → **정확 일치** 검증 → `AXPress` →
+전사에서 되읽어 확인. 마지막 규칙은 그대로다. `AXPress` 의 성공 반환은 전송을 증명하지
+않는다.
+
+**아직 미검증:** 카카오톡이 최전면이 **아닐 때** `AXPress` 가 실제로 보내는가. 이건
+진짜 전송이 필요하다.
+
+### 프로브가 드러낸 리졸버 결함 2개 (같은 날)
+
+프로브가 처음 뱉은 답은 "주입이 반영되지 않았다" 였는데, 원인은 A1 이 아니라 **엉뚱한
+요소에 쓰고 있었던 것**이었다. `입력창 role=AXTable`.
+
+- **`pickMessageInputField` 가 타당성 검사를 후보에 적용하지 않았다.** 점수순 정렬 후
+  `.first` 를 집을 뿐이라, 포커스 계보에서 딸려온 전사 `AXTable` 이 1등이 됐다.
+  전송뿐 아니라 **읽기도 이 프레임으로 행을 걸러내므로** 조용히 영향을 받고 있었다.
+  → 후보를 `isLikelyMessageInputElement` 로 거른 뒤 정렬한다. 못 찾으면 nil 을 낸다.
+- **`AXEnabled` 가 없는 것을 비활성으로 읽었다.** `attributeOptional(...) ?? false`.
+  카카오톡은 창에도 입력창에도 이 속성을 안 내놓는다(덤프에서 `AXWindow … flags:
+  disabled` 로 보였던 것이 이것이다). 그래서 `collectMessageInputCandidates` 가 찾아야
+  할 바로 그 요소를 수집 단계에서 버렸다. → `isExplicitlyDisabled` 를 새로 두고, 명시적
+  false 만 거부로 읽는다.
+
+둘 다 kmsg 에도 있다. kmsg 는 수정하지 않는다.
+
+**이 두 수정은 단위 테스트로 잡을 수 없다** — 살아있는 AX 트리가 필요하다. `probe-send`
+로 실증했고, 그것이 이 수정의 회귀 테스트다.
+
 ### 아직 미검증
 
 A1(AXConfirm)·A2(가려진 창)·A3(따뜻한 읽기 지연) 셋 다 그대로. M1 실물 검증이

@@ -91,20 +91,24 @@ struct Kbbs: ParsableCommand {
             return
         }
 
-        guard let listWindow = app.chatListWindow else {
-            ladder.step("대화목록 창", "없음")
-            ladder.failed("대화목록 창을 찾지 못했습니다. 카카오톡 창이 열려 있는지 확인하세요.")
-            throw ExitCode.failure
+        // The chat list window may be closed while conversations stay open — closing it
+        // does not quit KakaoTalk. That is not a reason to refuse to start: the open
+        // windows are a chat list of their own, just without previews.
+        let resolved = app.chatListWindow
+        let listWindow: UIElement? = {
+            guard let resolved,
+                  Kbbs.windowFailureReason(role: resolved.role, title: resolved.title) == nil
+            else {
+                return nil
+            }
+            return resolved
+        }()
+
+        if let listWindow {
+            ladder.step("대화목록 창", "확인", detail: "「\(listWindow.title ?? "제목없음")」")
+        } else {
+            ladder.step("대화목록 창", "없음", detail: "열린 대화창으로 대신합니다")
         }
-        if let reason = Kbbs.windowFailureReason(role: listWindow.role, title: listWindow.title) {
-            ladder.step("대화목록 창", "없음")
-            ladder.failed(reason)
-            print("  Dock 의 카카오톡 아이콘을 눌러 창을 열고, 「채팅」 탭으로 이동한 뒤")
-            print("  다시 실행하세요.")
-            print("")
-            throw ExitCode.failure
-        }
-        ladder.step("대화목록 창", "확인", detail: "「\(listWindow.title ?? "제목없음")」")
 
         let tracer: ((String) -> Void)? = trace
             ? { FileHandle.standardError.write(Data(("[trace] " + $0 + "\n").utf8)) }
@@ -112,34 +116,51 @@ struct Kbbs: ParsableCommand {
         tracer?("windows: " + app.windows.map { "「\($0.title ?? "-")」" }.joined(separator: " "))
 
         let started = Date()
-        let scanner = ChatListScanner()
-        let items = scanner.scan(in: listWindow, limit: limit, trace: tracer)
+        var rooms: [Room] = []
+        var source: ListSource = .chatList
+
+        if let listWindow {
+            let items = ChatListScanner().scan(in: listWindow, limit: limit, trace: tracer)
+            let openTitles = Set(app.windows.compactMap { $0.title })
+            rooms = items.map { item in
+                Room(
+                    title: item.discovery.title,
+                    lastMessage: item.discovery.lastMessage,
+                    timeLabel: item.discovery.timeLabel,
+                    unreadCount: item.discovery.unreadCount,
+                    hasWindow: Kbbs.hasOpenWindow(item.discovery.title, among: openTitles, listWindow: listWindow.title)
+                )
+            }
+        }
+
+        if rooms.isEmpty {
+            source = .openWindowsOnly
+            rooms = RoomList.fromOpenWindows(
+                titles: app.windows.compactMap { $0.role == kAXWindowRole ? $0.title : nil },
+                listWindowTitle: listWindow?.title ?? "카카오톡"
+            )
+        }
         let elapsed = Date().timeIntervalSince(started)
 
-        guard !items.isEmpty else {
+        guard !rooms.isEmpty else {
             ladder.step("대화방 목록 읽기", "0개", detail: String(format: "%.1f초", elapsed))
-            // The scanner distinguishes "no container" from "container but no rows"
-            // in its trace; without it we can only report the symptom, so say what to
-            // check rather than pretending to know which happened.
             ladder.failed("대화방을 하나도 읽지 못했습니다.")
             print("")
-            print(Kbbs.diagnoseEmptyList(in: listWindow, commandName: Kbbs.commandName))
+            if let listWindow {
+                print(Kbbs.diagnoseEmptyList(in: listWindow, commandName: Kbbs.commandName))
+            } else {
+                print("  카카오톡 창이 하나도 열려 있지 않습니다.")
+                print("  Dock 의 카카오톡 아이콘을 눌러 창을 열고 다시 실행하세요.")
+            }
             print("  어디서 끊겼는지 보려면:  \(Kbbs.commandName) --trace")
             print("")
             throw ExitCode.failure
         }
-        ladder.step("대화방 목록 읽기", "\(items.count)개", detail: String(format: "%.1f초", elapsed))
-
-        let openTitles = Set(app.windows.compactMap { $0.title })
-        let rooms = items.map { item in
-            Room(
-                title: item.discovery.title,
-                lastMessage: item.discovery.lastMessage,
-                timeLabel: item.discovery.timeLabel,
-                unreadCount: item.discovery.unreadCount,
-                hasWindow: Kbbs.hasOpenWindow(item.discovery.title, among: openTitles, listWindow: listWindow.title)
-            )
-        }
+        ladder.step(
+            "대화방 목록 읽기",
+            "\(rooms.count)개",
+            detail: String(format: "%.1f초", elapsed) + (source == .chatList ? "" : " · 열린 창만")
+        )
 
         ladder.blank()
         ladder.note("잠금 화면은 건드리지 않습니다. 암호를 여러 번 틀리면 계정이 로그아웃됩니다.")
@@ -148,7 +169,7 @@ struct Kbbs: ParsableCommand {
         // Every Accessibility call from here on runs on the worker's queue. The main
         // thread has made its last one.
         let worker = AXWorker(kakao: app, listWindow: listWindow, trace: trace)
-        run(rooms: rooms, worker: worker)
+        run(rooms: rooms, worker: worker, source: source)
     }
 
     /// Straight into one conversation, skipping the list.
@@ -235,10 +256,11 @@ struct Kbbs: ParsableCommand {
     }
 
     /// One frame to stdout, or the whole terminal, depending on `--once`.
-    private func run(rooms: [Room], worker: AXWorker?, demoRescan: (() -> [Room])? = nil) {
+    private func run(rooms: [Room], worker: AXWorker?, source: ListSource = .chatList, demoRescan: (() -> [Room])? = nil) {
         if once {
             var state = ListState()
             state.rooms = rooms
+            state.source = source
             state.link = .live(lastRefresh: Date())
             state.clock = Date()
             for row in ListScreen.render(state).render() {
@@ -253,6 +275,7 @@ struct Kbbs: ParsableCommand {
                 link: .live(lastRefresh: Date()),
                 worker: worker,
                 readLimit: limit,
+                source: source,
                 demoRescan: demoRescan
             )
         }
