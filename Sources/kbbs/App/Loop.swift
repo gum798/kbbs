@@ -60,10 +60,10 @@ struct Loop {
     /// they pressed Esc, so its [전송중] has to be there when they come back.
     private var ledgers: [String: PendingLedger] = [:]
     private var readFailures = 0
-    /// Sends that arrived while the worker was busy. Only sends queue — a poll that was
-    /// missed will come round again, but a message the user pressed Enter on must not be
-    /// silently dropped because a read happened to be running.
-    private var queuedSends: [AXJob] = []
+    /// Jobs the user asked for while the worker was busy. A poll that was missed comes
+    /// round again on its own; a key someone pressed does not, and dropping it silently
+    /// is why closing a window took two presses.
+    private var queued: [AXJob] = []
     private var blocked: BlockedState?
     private var lastGoodRead: Date?
 
@@ -218,13 +218,14 @@ struct Loop {
         case .closed(let title, let reason):
             if let reason {
                 say("「\(title)」 창을 닫지 못했습니다: \(reason)")
-            } else if screen == .room {
-                break
             } else {
                 list.rooms = list.rooms.map {
                     $0.title == title ? Room(title: $0.title, lastMessage: $0.lastMessage, timeLabel: $0.timeLabel, unreadCount: $0.unreadCount, hasWindow: false) : $0
                 }
             }
+
+        case .shown(let title):
+            say("「\(title)」 창을 띄웠습니다")
 
         case .sendRefused(let body, let reason):
             // Every refusal happens before the press, so nothing was sent. The text goes
@@ -284,17 +285,27 @@ struct Loop {
     private mutating func submit(_ job: AXJob) {
         guard let worker else { return }
         guard !axBusy else {
-            if case .send = job { queuedSends.append(job) }
+            if Self.isUserRequested(job) { queued.append(job) }
             return
         }
         axBusy = true
         worker.submit(job, generation: generation)
     }
 
-    /// Queued sends go before anything the timers want.
+    /// Everything a keystroke asks for. Reads and scans are left out: one that is skipped
+    /// is repeated by its timer a moment later, and queueing them would build a backlog
+    /// of answers nobody is waiting for any more.
+    private static func isUserRequested(_ job: AXJob) -> Bool {
+        switch job {
+        case .send, .closeWindow, .showWindow, .openWindow, .openRoom: return true
+        case .scanList, .readRoom: return false
+        }
+    }
+
+    /// What the user asked for goes before anything the timers want.
     private mutating func dispatchQueued() {
-        guard !axBusy, !queuedSends.isEmpty else { return }
-        submit(queuedSends.removeFirst())
+        guard !axBusy, !queued.isEmpty else { return }
+        submit(queued.removeFirst())
     }
 
     /// The user changed their mind. Anything in flight still runs to completion on the
@@ -390,10 +401,7 @@ struct Loop {
             }
             return .carryOn
         case .showWindow:
-            if let title = roomState?.title {
-                submit(.showWindow(title: title))
-                say("카카오톡에서 창을 띄웠습니다")
-            }
+            if let title = roomState?.title { submit(.showWindow(title: title)) }
             return .carryOn
         case .refresh:
             if let token = roomToken {

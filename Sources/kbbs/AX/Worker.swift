@@ -30,6 +30,7 @@ enum AXResult: Sendable {
     case sent(body: String, composerCleared: Bool)
     case sendRefused(body: String, reason: String)
     case closed(title: String, reason: String?)
+    case shown(title: String)
     case failed(reason: String)
 }
 
@@ -313,10 +314,11 @@ final class AXWorker: @unchecked Sendable {
             }
 
         case .showWindow(let title):
-            if let window = kakao.windows.first(where: { $0.role == kAXWindowRole && $0.title == title }) {
-                try? window.setAttribute(kAXMinimizedAttribute, value: false as CFBoolean)
+            guard let window = kakao.windows.first(where: { $0.role == kAXWindowRole && $0.title == title }) else {
+                return .failed(reason: "「\(title)」 창이 없습니다")
             }
-            return .closed(title: title, reason: nil)
+            try? window.setAttribute(kAXMinimizedAttribute, value: false as CFBoolean)
+            return .shown(title: title)
 
         case .closeWindow(let title):
             do {
