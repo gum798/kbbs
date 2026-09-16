@@ -73,4 +73,95 @@ struct ListState {
 
     /// 1-based index of the first room on this page, as shown in the number column.
     var firstNumberOnPage: Int { page * ListState.rowsPerPage + 1 }
+
+    /// How many of this page's thirteen slots hold a room. Less than a full page only
+    /// on the last one.
+    var roomsOnPage: Int { visibleRooms.count }
+
+    /// The room Enter would open, as an index into `rooms`, or nil if there is none.
+    ///
+    /// A typed number wins over the cursor and is absolute across pages — room 16 is
+    /// typed as '16' from anywhere. A number nobody has is nil rather than clamped: the
+    /// caller says '그런 방은 없습니다' rather than opening a room the user did not ask
+    /// for.
+    var selectedRoomIndex: Int? {
+        if !numberBuffer.isEmpty {
+            guard let number = Int(numberBuffer), (1...rooms.count).contains(number) else {
+                return nil
+            }
+            return number - 1
+        }
+        let index = page * ListState.rowsPerPage + cursor
+        return index < rooms.count ? index : nil
+    }
+
+    // MARK: - Moving
+
+    /// Down one row, turning the page at the bottom and wrapping at the end of the list.
+    ///
+    /// Wrapping is what keeps the cursor off the blank slots of a partial last page:
+    /// there is no position it can reach that is not a room.
+    mutating func moveDown() {
+        clearNumberBuffer()
+        guard !rooms.isEmpty else { return }
+        if cursor + 1 < roomsOnPage {
+            cursor += 1
+        } else {
+            page = (page + 1) % pageCount
+            cursor = 0
+        }
+    }
+
+    mutating func moveUp() {
+        clearNumberBuffer()
+        guard !rooms.isEmpty else { return }
+        if cursor > 0 {
+            cursor -= 1
+        } else {
+            page = (page + pageCount - 1) % pageCount
+            cursor = max(0, roomsOnPage - 1)
+        }
+    }
+
+    mutating func pageForward() {
+        clearNumberBuffer()
+        guard !rooms.isEmpty else { return }
+        page = (page + 1) % pageCount
+        cursor = 0
+    }
+
+    mutating func pageBack() {
+        clearNumberBuffer()
+        guard !rooms.isEmpty else { return }
+        page = (page + pageCount - 1) % pageCount
+        cursor = 0
+    }
+
+    // MARK: - The 선택> buffer
+
+    /// A digit, up to three. The cursor follows as a live preview when the room is on
+    /// this page — and deliberately does NOT turn the page when it is not, because '1'
+    /// on the way to '12' would otherwise throw the screen around twice per number.
+    mutating func appendDigit(_ digit: Character) {
+        guard digit.isNumber, numberBuffer.count < 3 else { return }
+        numberBuffer.append(digit)
+        previewBufferedRoom()
+    }
+
+    mutating func popDigit() {
+        guard !numberBuffer.isEmpty else { return }
+        numberBuffer.removeLast()
+        previewBufferedRoom()
+    }
+
+    mutating func clearNumberBuffer() {
+        numberBuffer.removeAll()
+    }
+
+    private mutating func previewBufferedRoom() {
+        guard let index = selectedRoomIndex else { return }
+        let target = index / ListState.rowsPerPage
+        guard target == page else { return }
+        cursor = index % ListState.rowsPerPage
+    }
 }
