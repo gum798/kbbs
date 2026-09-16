@@ -42,6 +42,9 @@ struct Kbbs: ParsableCommand {
     @Flag(name: .long, help: "카카오톡 없이 예시 데이터로 화면만 그린다")
     var demo = false
 
+    @Flag(name: .long, help: "접근성 트리를 어떻게 훑었는지 표준오류로 남긴다")
+    var trace = false
+
     func run() throws {
         Paths.ensureDirectory()
         let ladder = BootLadder()
@@ -78,7 +81,20 @@ struct Kbbs: ParsableCommand {
             ladder.failed("대화목록 창을 찾지 못했습니다. 카카오톡 창이 열려 있는지 확인하세요.")
             throw ExitCode.failure
         }
+        if let reason = Kbbs.windowFailureReason(role: listWindow.role, title: listWindow.title) {
+            ladder.step("대화목록 창", "없음")
+            ladder.failed(reason)
+            print("  Dock 의 카카오톡 아이콘을 눌러 창을 열고, 「채팅」 탭으로 이동한 뒤")
+            print("  다시 실행하세요.")
+            print("")
+            throw ExitCode.failure
+        }
         ladder.step("대화목록 창", "확인", detail: "「\(listWindow.title ?? "제목없음")」")
+
+        let tracer: ((String) -> Void)? = trace
+            ? { FileHandle.standardError.write(Data(("[trace] " + $0 + "\n").utf8)) }
+            : nil
+        tracer?("windows: " + app.windows.map { "「\($0.title ?? "-")」" }.joined(separator: " "))
 
         // Ambiguous-width glyphs are measured with a DSR-CPR probe, which needs raw
         // mode. Until that exists we assume narrow and say so rather than pretending.
@@ -86,12 +102,19 @@ struct Kbbs: ParsableCommand {
 
         let started = Date()
         let scanner = ChatListScanner()
-        let items = scanner.scan(in: listWindow, limit: limit)
+        let items = scanner.scan(in: listWindow, limit: limit, trace: tracer)
         let elapsed = Date().timeIntervalSince(started)
 
         guard !items.isEmpty else {
             ladder.step("대화방 목록 읽기", "0개", detail: String(format: "%.1f초", elapsed))
-            ladder.failed("대화방을 하나도 읽지 못했습니다. `\(Kbbs.commandName) inspect` 로 창 구조를 확인하세요.")
+            // The scanner distinguishes "no container" from "container but no rows"
+            // in its trace; without it we can only report the symptom, so say what to
+            // check rather than pretending to know which happened.
+            ladder.failed("대화방을 하나도 읽지 못했습니다.")
+            print("")
+            print(Kbbs.diagnoseEmptyList(in: listWindow, commandName: Kbbs.commandName))
+            print("  어디서 끊겼는지 보려면:  \(Kbbs.commandName) --trace")
+            print("")
             throw ExitCode.failure
         }
         ladder.step("대화방 목록 읽기", "\(items.count)개", detail: String(format: "%.1f초", elapsed))
@@ -135,6 +158,75 @@ struct Kbbs: ParsableCommand {
             if title == roomTitle { return true }
         }
         return false
+    }
+
+    /// Why a resolved "chat list window" is not actually usable, or nil if it is.
+    ///
+    /// `findWindow(title:)` matches on title alone. When KakaoTalk is running with every
+    /// window closed, the AX tree holds only menu bars and the element whose title is
+    /// "카카오톡" is the APPLICATION, not a window — so the check passed, the scan then
+    /// found nothing, and the two messages contradicted each other. Verified against the
+    /// live app: role came back AXApplication.
+    static func windowFailureReason(role: String?, title: String?) -> String? {
+        guard let role else {
+            return "창을 식별할 수 없습니다 (role 을 읽지 못했습니다)."
+        }
+        guard role == kAXWindowRole else {
+            let name = title.map { "「\($0)」" } ?? "이름 없는 요소"
+            return """
+            열린 카카오톡 창이 없습니다.
+              \(name) 를 찾았지만 이것은 창이 아니라 \(role) 입니다.
+              카카오톡이 실행 중이지만 창이 모두 닫혀 있을 때 이렇게 보입니다.
+            """
+        }
+        return nil
+    }
+
+    /// Why the scan came back empty, said precisely rather than guessed.
+    ///
+    /// KakaoTalk's main window carries one navigation button per tab, identified as
+    /// `friends` / `chatrooms` / `more`. If those are present but the chat-list
+    /// container is not, the window is simply on another tab — the most common cause,
+    /// and one the user fixes in a second once told plainly.
+    ///
+    /// Read-only: nothing is clicked and nothing is brought to the front.
+    ///
+    /// Budgeted deliberately. `UIElement.findFirst(identifier:)` delegates to the
+    /// unbounded `findFirst(where:)`, and on KakaoTalk's real tree that does not finish
+    /// — an earlier version of this function ran for over seven minutes before being
+    /// killed. Nav buttons live near the root, so a few thousand nodes is generous, and
+    /// one traversal collects all three instead of three traversals collecting one each.
+    static func diagnoseEmptyList(in window: UIElement, commandName: String) -> String {
+        let labels = ["chatrooms": "채팅", "friends": "친구", "more": "더보기"]
+        let hits = window.findAll(
+            where: { labels.keys.contains($0.identifier ?? "") },
+            limit: labels.count,
+            maxNodes: 3000
+        )
+
+        guard !hits.isEmpty else {
+            return """
+              이 창에서는 탭 버튼(친구/채팅/더보기)조차 찾지 못했습니다.
+              카카오톡이 로그인 화면이나 잠금 화면일 수 있습니다.
+              카카오톡을 직접 확인해 주세요.
+            """
+        }
+
+        let found = hits.compactMap { button -> String? in
+            guard let id = button.identifier, let label = labels[id] else { return nil }
+            let selected = (button.value as? Int).map { $0 != 0 }
+                ?? (button.stringValue.map { $0 == "1" } ?? false)
+            return label + (selected ? "(선택됨)" : "")
+        }.sorted()
+
+        return """
+          탭 버튼은 보입니다: \(found.joined(separator: " / "))
+          그런데 대화목록이 없습니다 — 카카오톡이 「채팅」 탭에 있지 않습니다.
+          카카오톡 창에서 채팅 탭을 누른 뒤 다시 실행하세요.
+
+          (\(commandName) 가 대신 눌러 주지는 않습니다. 그러려면 카카오톡을 앞으로
+           끌어내야 하는데, 읽기만 하는 동안에는 그러지 않습니다.)
+        """
     }
 
     static let demoRooms: [Room] = [
