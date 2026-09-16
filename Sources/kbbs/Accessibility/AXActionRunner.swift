@@ -50,6 +50,31 @@ struct AXActionRunner {
         postMouseClicks(at: point, clickCount: 2)
     }
 
+    /// Scroll a list under the pointer.
+    ///
+    /// KakaoTalk advertises AXScrollDownByPage on its chat list and answers "Attribute
+    /// unsupported" when asked to perform it, so a wheel event is the only way to move
+    /// that list. It goes to whatever is under the cursor, which is why the cursor is
+    /// warped to the target first and put back afterwards.
+    func scrollWheel(at point: CGPoint, lines: Int, label: String) {
+        log("\(label): scroll \(lines) at (\(Int(point.x)),\(Int(point.y)))")
+        let source = CGEventSource(stateID: .hidSystemState)
+        let restorePoint = CGEvent(source: nil)?.location
+
+        CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?
+            .post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.02)
+
+        CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 1, wheel1: Int32(lines), wheel2: 0, wheel3: 0)?
+            .post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.05)
+
+        if let restorePoint {
+            CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: restorePoint, mouseButton: .left)?
+                .post(tap: .cghidEventTap)
+        }
+    }
+
     private func postMouseClicks(at point: CGPoint, clickCount: Int) {
         let source = CGEventSource(stateID: .hidSystemState)
         let restorePoint = CGEvent(source: nil)?.location

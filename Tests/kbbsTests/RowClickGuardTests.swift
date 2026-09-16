@@ -15,6 +15,37 @@ final class RowClickGuardTests: XCTestCase {
         XCTAssertEqual(RowClickGuard.clickPoint(rowFrame: row, visibleScreens: [screen]), CGPoint(x: 250, y: 230))
     }
 
+    // MARK: - Inside the list window, not merely on the display
+
+    /// A scrollable list gives frames to rows that have scrolled out of sight: they are
+    /// real coordinates, on a real display, below the bottom edge of the window. Clicking
+    /// one lands on the desktop, or on whatever app is behind it.
+    func testARowBelowTheWindowIsRefused() {
+        let list = CGRect(x: 2115, y: 667, width: 400, height: 640)
+        let scrolledOff = CGRect(x: 2193, y: 1280, width: 305, height: 74)
+        XCTAssertNil(RowClickGuard.clickPoint(rowFrame: scrolledOff, visibleScreens: [CGRect(x: 0, y: 0, width: 2560, height: 1440)], within: list))
+    }
+
+    func testARowInsideTheWindowIsAccepted() {
+        let list = CGRect(x: 2115, y: 667, width: 400, height: 640)
+        let visible = CGRect(x: 2193, y: 1058, width: 305, height: 74)
+        XCTAssertEqual(
+            RowClickGuard.clickPoint(rowFrame: visible, visibleScreens: [CGRect(x: 0, y: 0, width: 2560, height: 1440)], within: list),
+            CGPoint(x: 2345.5, y: 1095)
+        )
+    }
+
+    func testARowStraddlingTheBottomEdgeIsRefused() {
+        let list = CGRect(x: 0, y: 0, width: 400, height: 640)
+        let half = CGRect(x: 10, y: 610, width: 300, height: 74)
+        XCTAssertNil(RowClickGuard.clickPoint(rowFrame: half, visibleScreens: [screen], within: list))
+    }
+
+    func testWithNoWindowFrameTheScreenCheckStillApplies() {
+        let row = CGRect(x: 100, y: 200, width: 300, height: 60)
+        XCTAssertNotNil(RowClickGuard.clickPoint(rowFrame: row, visibleScreens: [screen], within: nil))
+    }
+
     /// A row the scanner never got a frame for. Clicking the origin would land on
     /// whatever is at the top-left of the main display.
     func testNoFrameMeansNoClick() {

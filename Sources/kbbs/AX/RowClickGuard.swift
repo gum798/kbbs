@@ -15,7 +15,10 @@ enum RowClickGuard {
     /// somewhere it should not be clicked.
     private static let minimumSide: CGFloat = 4
 
-    static func clickPoint(rowFrame: CGRect?, visibleScreens: [CGRect]) -> CGPoint? {
+    /// `window` is the list's own frame. A scrollable list gives frames to rows that have
+    /// scrolled out of sight — real coordinates on a real display, below the window's
+    /// bottom edge — and clicking one lands on the desktop or on whatever is behind it.
+    static func clickPoint(rowFrame: CGRect?, visibleScreens: [CGRect], within window: CGRect? = nil) -> CGPoint? {
         guard let rowFrame,
               rowFrame.width >= minimumSide,
               rowFrame.height >= minimumSide,
@@ -29,6 +32,7 @@ enum RowClickGuard {
         // The centre is what gets clicked, so the centre is what has to be on a display.
         // A row half off the edge fails here rather than clicking the half that is left.
         guard visibleScreens.contains(where: { $0.contains(centre) }) else { return nil }
+        if let window, !window.contains(centre) { return nil }
         return centre
     }
 }

@@ -326,16 +326,29 @@ final class AXWorker: @unchecked Sendable {
     /// Four steps, each reported so a click that never lands is visible as the step it
     /// stopped on. The terminal gets the front back at the end whatever happened.
     private func openWindow(titled title: String) -> AXResult {
+        func log(_ line: String) { TTYOut.log("[open] \(line)") }
+        log("요청 「\(title)」 보유행=\(rows.count) 목록창=\(listWindow == nil ? "없음" : "있음")")
         // The list reorders whenever a message arrives, and the table REUSES its row
         // views — so a handle kept from an earlier scan can now be showing a different
         // conversation entirely, and clicking it opens that one. Every open therefore
         // checks the row still says what it said, and re-scans when it does not.
-        if rows[title] == nil || !Self.row(rows[title]!, stillShows: title), let listWindow {
-            let found = scanner.scan(in: listWindow, limit: 60, trace: nil)
-            rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
+        if rows[title] == nil || !Self.row(rows[title]!, stillShows: title) {
+            log("행 재스캔 (없거나 낡음)")
+            if let listWindow {
+                let found = scanner.scan(in: listWindow, limit: 60, trace: nil)
+                rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
+                log("재스캔 결과 \(found.count)개")
+            } else {
+                log("목록 창이 없어 재스캔 불가")
+            }
         }
-        guard let row = rows[title], Self.row(row, stillShows: title) else {
+        guard let row = rows[title] else {
+            log("실패: 행 없음")
             return .openFailed(title: title, reason: "목록에서 그 행을 찾지 못했습니다")
+        }
+        guard Self.row(row, stillShows: title) else {
+            log("실패: 행이 다른 방을 표시함")
+            return .openFailed(title: title, reason: "목록이 바뀌었습니다. R 로 새로고침하세요")
         }
 
         let terminal = SystemFocusProbe.frontmostPID()
@@ -349,8 +362,10 @@ final class AXWorker: @unchecked Sendable {
         guard let kakaoPID = KakaoTalkApp.runningApplication?.processIdentifier,
               SystemFocusProbe.waitForFrontmost(pid: kakaoPID, timeout: 1.5)
         else {
+            log("실패: 전면 전환 안 됨")
             return .openFailed(title: title, reason: "카카오톡이 앞으로 나오지 않았습니다")
         }
+        log("전면 전환 확인")
 
         // 2. Raise the list, then take coordinates. Bringing the app forward brings ALL
         //    its windows, so a chat window sitting over the list takes the double-click
@@ -362,12 +377,23 @@ final class AXWorker: @unchecked Sendable {
             try? listWindow.performAction(kAXRaiseAction)
             Thread.sleep(forTimeInterval: 0.2)
         }
+        // A row that has scrolled out of sight still has a frame — below the window, on
+        // the desktop — so it has to be brought into view before its coordinates mean
+        // anything. This is what made every room past the visible dozen unopenable.
+        if let listWindow, let listFrame = listWindow.frame,
+           RowClickGuard.clickPoint(rowFrame: row.frame, visibleScreens: [listFrame]) == nil {
+            log("행이 창 밖 — 스크롤 시작")
+            _ = RowScroller.bringIntoView(row: row, listWindow: listWindow, runner: runner, log: log)
+        }
         guard let point = RowClickGuard.clickPoint(
             rowFrame: row.frame,
-            visibleScreens: OpenCommand.screensInEventSpace()
+            visibleScreens: OpenCommand.screensInEventSpace(),
+            within: listWindow?.frame
         ) else {
+            log("실패: 좌표 거부 frame=\(row.frame.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "없음")")
             return .openFailed(title: title, reason: "행이 화면 밖이거나 가려져 있습니다")
         }
+        log("누를 좌표 (\(Int(point.x)),\(Int(point.y)))")
 
         // 3. One double-click. Never retried: a second one lands somewhere unknown.
         mailbox.deliver(.openingStep(title: title, step: 3), generation: currentGeneration)
@@ -382,6 +408,7 @@ final class AXWorker: @unchecked Sendable {
                 // composer value with the 전송 button enabling. So the window kbbs had to
                 // bring up gets put away again immediately instead of piling onto the
                 // screen for the rest of the session.
+                log("열림 확인 「\(opened.matchedTitle)」")
                 try? opened.window.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
                 let token = nextToken
                 nextToken += 1
@@ -395,6 +422,7 @@ final class AXWorker: @unchecked Sendable {
             }
             Thread.sleep(forTimeInterval: 0.1)
         }
+        log("실패: 2.5초 안에 창이 안 열림. 지금 창=" + kakao.windows.compactMap { $0.title }.joined(separator: "/"))
         return .openFailed(title: title, reason: "창이 열리지 않았습니다")
     }
 

@@ -84,10 +84,15 @@ struct OpenCommand: ParsableCommand {
             print("행 확인       그 행은 이제 다른 방입니다 (목록이 바뀌었습니다)")
             throw ExitCode.failure
         }
+        if let listFrame = listWindow.frame,
+           RowClickGuard.clickPoint(rowFrame: row.frame, visibleScreens: [listFrame]) == nil {
+            let ok = RowScroller.bringIntoView(row: row, listWindow: listWindow, runner: runner) { print("  \($0)") }
+            print("스크롤         \(ok ? "창 안으로 들어옴" : "실패")")
+        }
         let fresh = row.frame
         print("행 프레임 재확인 \(fresh.map { "y=\(Int($0.minY))" } ?? "없음")")
-        guard let point = RowClickGuard.clickPoint(rowFrame: fresh, visibleScreens: screens) else {
-            print("좌표 거부      올린 뒤 행이 화면 밖입니다")
+        guard let point = RowClickGuard.clickPoint(rowFrame: fresh, visibleScreens: screens, within: listWindow.frame) else {
+            print("좌표 거부      행이 목록 창 밖입니다 (창 \(listWindow.frame.map { "y \(Int($0.minY))~\(Int($0.maxY))" } ?? "?"), 행 y \(fresh.map { Int($0.midY) } ?? -1))")
             throw ExitCode.failure
         }
         print("누를 좌표      (\(Int(point.x)), \(Int(point.y)))")
