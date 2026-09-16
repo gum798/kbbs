@@ -66,6 +66,10 @@ enum ListScreen {
             f.set(row, bordered(selected ? Theme.reversed(Width.pad(line, to: inner)) : line))
         }
 
+        if let confirm = state.confirm {
+            stamp(confirm, into: &f)
+        }
+
         f.set(18, Frame.rule(left: Theme.teeL, fill: Theme.h, right: Theme.teeR, width: width))
         f.set(rowStatus, bordered(statusLine(state)))
         f.set(20, Frame.rule(left: Theme.teeL, fill: Theme.h, right: Theme.teeR, width: width))
@@ -74,6 +78,59 @@ enum ListScreen {
         f.set(23, Frame.rule(left: Theme.bl, fill: Theme.h, right: Theme.br, width: width))
 
         return f
+    }
+
+    // MARK: - The consent gate
+
+    /// The four steps of an open, in the order they happen. Naming them is what makes a
+    /// click that never lands legible: the ladder stops on the step that failed.
+    private static let openSteps = ["전면 전환", "행 좌표 확인", "두 번 누르기", "창 대기"]
+
+    /// Stamps the gate over the middle of the list, leaving the rows above it visible so
+    /// the user keeps their place.
+    private static func stamp(_ confirm: ConfirmBox, into f: inout Frame) {
+        let body: [String]
+        let heading: String
+
+        switch confirm.stage {
+        case .asking:
+            heading = "[주의] 「\(Width.elide(confirm.title, to: 24))」 방은 카카오톡에 열린 창이 없습니다."
+            body = [
+                "",
+                "창을 열려면 카카오톡이 앞으로 나와서, 목록의 해당 줄을 자동으로",
+                "두 번 누릅니다. 그동안 마우스와 키보드를 건드리지 마세요.",
+                "카카오톡 채팅 목록 창이 가려져 있으면 실패합니다.",
+                "실패해도 메시지는 보내지 않습니다.",
+                "",
+                "  Y = 카카오톡에서 창 열기          N / Esc = 취소하고 목록으로",
+            ]
+        case .opening(let step):
+            heading = "창 여는 중 — 「\(Width.elide(confirm.title, to: 24))」"
+            body = [""] + openSteps.enumerated().map { index, name in
+                let mark = index < step ? "완료" : (index == step ? "…" : "")
+                return "  " + Width.pad(name, to: 18) + mark
+            } + ["", "  마우스와 키보드를 건드리지 마세요."]
+        case .failed(let reason):
+            heading = "[실패] 창을 열지 못했습니다 — \(Width.elide(reason, to: 30))"
+            body = [
+                "",
+                "카카오톡에서 이 방을 직접 여신 뒤 R 을 누르세요.",
+                "메시지는 보내지 않았습니다.",
+                "",
+                "  R = 목록 새로고침                 Esc = 닫기",
+            ]
+        }
+
+        let inner = width - 4
+        let lines = [heading] + body
+        // The box ends on the last list row (17); row 18 is the separator and stamping
+        // over it eats the box's own bottom border.
+        let top = max(rowFirstRoom, 17 - (lines.count + 1))
+        f.set(top, bordered(" " + Frame.rule(left: "┌", fill: "─", right: "┐", width: inner)))
+        for (offset, line) in lines.enumerated() {
+            f.set(top + 1 + offset, bordered(" " + Frame.bordered(" " + line, left: "│", right: "│", width: inner)))
+        }
+        f.set(top + 1 + lines.count, bordered(" " + Frame.rule(left: "└", fill: "─", right: "┘", width: inner)))
     }
 
     // MARK: - Line composition

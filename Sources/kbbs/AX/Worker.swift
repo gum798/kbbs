@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 // MARK: - What crosses the boundary
@@ -9,6 +10,9 @@ enum AXJob: Sendable {
     case openRoom(title: String)
     /// `token` names a context the worker opened earlier and still holds.
     case readRoom(token: Int, title: String, limit: Int)
+    /// The one job that posts a hardware event. Only ever queued after the user has said
+    /// Y to the gate that spells out what it does.
+    case openWindow(title: String)
 }
 
 /// A finished job, reduced to things that are safe to hand to the main thread.
@@ -17,6 +21,9 @@ enum AXResult: Sendable {
     case opened(token: Int, title: String, matchedTitle: String, elapsed: TimeInterval)
     case read(token: Int, snapshot: TranscriptSnapshot, elapsed: TimeInterval)
     case noWindow(title: String, candidates: [String])
+    /// A step of the window-opening ladder finished. `step` is how many are done.
+    case openingStep(title: String, step: Int)
+    case openFailed(title: String, reason: String)
     case failed(reason: String)
 }
 
@@ -157,6 +164,8 @@ final class AXWorker: @unchecked Sendable {
 
     private let kakao: KakaoTalkApp
     private let reader: RoomReader
+    /// Only the window-opening job uses this, and only for the double-click.
+    private let runner: AXActionRunner
     private let scanner = ChatListScanner()
     /// nil when kbbs was started straight into one room, which needs no list.
     private let listWindow: UIElement?
@@ -171,6 +180,7 @@ final class AXWorker: @unchecked Sendable {
         self.listWindow = listWindow
         self.trace = trace
         self.reader = RoomReader(kakao: kakao, trace: trace)
+        self.runner = AXActionRunner(traceEnabled: trace)
     }
 
     /// What the worker is blocked on, if anything. Safe from the main thread.
@@ -181,8 +191,13 @@ final class AXWorker: @unchecked Sendable {
 
     /// Queue one job. The caller stamps it with the generation it belongs to and is
     /// responsible for not queueing a second one while the first is outstanding.
+    /// The generation of the job currently running, so a job that reports progress can
+    /// stamp its own messages. Worker-side only.
+    private var currentGeneration = 0
+
     func submit(_ job: AXJob, generation: Int) {
         queue.async { [self] in
+            currentGeneration = generation
             watchdog.began(label: Self.label(for: job))
             let started = Date()
             let result = perform(job, started: started)
@@ -196,6 +211,7 @@ final class AXWorker: @unchecked Sendable {
         case .scanList: return "대화방 목록 읽기"
         case .openRoom: return "대화방 열기"
         case .readRoom: return "대화 읽기"
+        case .openWindow: return "창 열기"
         }
     }
 
@@ -205,6 +221,7 @@ final class AXWorker: @unchecked Sendable {
             guard let listWindow else { return .failed(reason: "대화목록 창이 없습니다") }
             let found = scanner.scan(in: listWindow, limit: limit, trace: nil)
             guard !found.isEmpty else { return .failed(reason: "대화방을 하나도 읽지 못했습니다") }
+            rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
             let open = Set(kakao.windows.compactMap { $0.title })
             let rooms = found.map { item in
                 Room(
@@ -245,8 +262,83 @@ final class AXWorker: @unchecked Sendable {
                 return .failed(reason: "전사를 읽지 못했습니다")
             }
             return .read(token: token, snapshot: read.snapshot, elapsed: read.elapsed)
+
+        case .openWindow(let title):
+            return openWindow(titled: title)
         }
     }
+
+    /// Open a room's window by driving KakaoTalk's own chat list.
+    ///
+    /// The only hardware event kbbs posts. KakaoTalk's rows expose neither AXPress nor a
+    /// Return that works — the comment recording that is in AXActionRunner — so a double
+    /// click at screen coordinates is the only path that exists.
+    ///
+    /// Four steps, each reported so a click that never lands is visible as the step it
+    /// stopped on. The terminal gets the front back at the end whatever happened.
+    private func openWindow(titled title: String) -> AXResult {
+        guard let row = rows[title] else {
+            return .openFailed(title: title, reason: "목록에서 그 행을 잃어버렸습니다")
+        }
+
+        let terminal = SystemFocusProbe.frontmostPID()
+        defer {
+            if let terminal { SystemFocusProbe.activate(pid: terminal) }
+        }
+
+        // 1. Front. KakaoTalk has to be frontmost for a click to reach it.
+        mailbox.deliver(.openingStep(title: title, step: 1), generation: currentGeneration)
+        kakao.activateForSend()
+        guard let kakaoPID = KakaoTalkApp.runningApplication?.processIdentifier,
+              SystemFocusProbe.waitForFrontmost(pid: kakaoPID, timeout: 1.5)
+        else {
+            return .openFailed(title: title, reason: "카카오톡이 앞으로 나오지 않았습니다")
+        }
+
+        // 2. Coordinates, re-read now rather than trusting the ones from the scan: the
+        //    list may have scrolled in the time the user spent reading the warning.
+        mailbox.deliver(.openingStep(title: title, step: 2), generation: currentGeneration)
+        let screens = NSScreen.screens.map { screen -> CGRect in
+            // NSScreen is bottom-left origin; AX frames and CGEvent are top-left.
+            let main = NSScreen.screens.first?.frame.height ?? screen.frame.height
+            return CGRect(
+                x: screen.frame.minX,
+                y: main - screen.frame.maxY,
+                width: screen.frame.width,
+                height: screen.frame.height
+            )
+        }
+        guard let point = RowClickGuard.clickPoint(rowFrame: row.frame, visibleScreens: screens) else {
+            return .openFailed(title: title, reason: "행이 화면 밖이거나 가려져 있습니다")
+        }
+
+        // 3. One double-click. Never retried: a second one lands somewhere unknown.
+        mailbox.deliver(.openingStep(title: title, step: 3), generation: currentGeneration)
+        runner.mouseDoubleClick(at: point, label: "open row")
+
+        // 4. Wait for the window to actually appear, then resolve it like any other.
+        mailbox.deliver(.openingStep(title: title, step: 4), generation: currentGeneration)
+        let deadline = Date().addingTimeInterval(2.5)
+        while Date() < deadline {
+            if let opened = try? reader.open(title: title) {
+                let token = nextToken
+                nextToken += 1
+                contexts[token] = opened
+                return .opened(
+                    token: token,
+                    title: title,
+                    matchedTitle: opened.matchedTitle,
+                    elapsed: 0
+                )
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return .openFailed(title: title, reason: "창이 열리지 않았습니다")
+    }
+
+    /// Rows from the last scan, by title, so an open does not have to hunt for a row the
+    /// scanner already found. Worker-side only, like every other live handle.
+    private var rows: [String: UIElement] = [:]
 
     /// Take over a context that was resolved before the worker existed — the `--room`
     /// path opens one during the boot ladder so it can report what it cost.

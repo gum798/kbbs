@@ -60,6 +60,9 @@ struct ListState {
     var link: LinkState = .connecting
     var clock = Date()
 
+    /// Set while the user is being asked whether to let kbbs open a room's window.
+    var confirm: ConfirmBox?
+
     /// Something the screen has to say back — a room number nobody has, a refusal while
     /// the scan is busy. The run loop clears it after a moment; the model only holds it.
     var note: String?
@@ -168,4 +171,16 @@ struct ListState {
         guard target == page else { return }
         cursor = index % ListState.rowsPerPage
     }
+}
+
+/// The consent gate for opening a room that has no KakaoTalk window.
+struct ConfirmBox {
+    enum Stage {
+        case asking
+        case opening(step: Int)
+        case failed(reason: String)
+    }
+
+    let title: String
+    var stage: Stage
 }

@@ -22,7 +22,7 @@ struct Loop {
     private static let listPoll: TimeInterval = 15.0
     private static let windowWatch: TimeInterval = 1.0
 
-    private enum Screen { case list, room, waiting }
+    private enum Screen { case list, room, waiting, confirm }
 
     private struct WaitingState {
         let title: String
@@ -106,7 +106,9 @@ struct Loop {
     private mutating func drainResults() {
         guard let worker else { return }
         for result in worker.collect(generation: generation) {
-            axBusy = false
+            // A progress report is not a finished job. Clearing the busy flag on one
+            // would let a second job be queued while the click is still in flight.
+            if case .openingStep = result {} else { axBusy = false }
             apply(result)
         }
     }
@@ -129,6 +131,7 @@ struct Loop {
             state.note = String(format: "열기 %.1f초 · 읽는 중…", elapsed)
             roomState = state
             waiting = nil
+            list.confirm = nil
             screen = .room
             nextWindowWatch = nil
             nextListPoll = nil
@@ -147,10 +150,23 @@ struct Loop {
             nextRoomPoll = Date().addingTimeInterval(Self.roomPoll)
 
         case .noWindow(let title, _):
-            waiting = WaitingState(title: title, since: Date())
-            screen = .waiting
-            roomState = nil
-            nextWindowWatch = Date().addingTimeInterval(Self.windowWatch)
+            // From the list this is a question, not a failure: the user decides whether
+            // kbbs may take over the screen and the mouse to open it. From the waiting
+            // screen it is just "not yet" and the watch keeps running.
+            if screen == .waiting {
+                nextWindowWatch = Date().addingTimeInterval(Self.windowWatch)
+            } else {
+                list.confirm = ConfirmBox(title: title, stage: .asking)
+                screen = .confirm
+                lastFrame = []
+            }
+
+        case .openingStep(_, let step):
+            list.confirm?.stage = .opening(step: step)
+
+        case .openFailed(let title, let reason):
+            list.confirm = ConfirmBox(title: title, stage: .failed(reason: reason))
+            screen = .confirm
             lastFrame = []
 
         case .failed(let reason):
@@ -161,7 +177,7 @@ struct Loop {
                 roomState?.link = .down(since: Date(), reason: reason)
                 roomState?.note = "\(reason) · \(Int(wait))초 뒤 다시"
                 nextRoomPoll = Date().addingTimeInterval(wait)
-            case .list:
+            case .list, .confirm:
                 list.link = .down(since: Date(), reason: reason)
                 say(reason)
                 nextListPoll = Date().addingTimeInterval(wait)
@@ -194,6 +210,7 @@ struct Loop {
         case .list: return handleList(key)
         case .room: return handleRoom(key)
         case .waiting: return handleWaiting(key)
+        case .confirm: return handleConfirm(key)
         }
     }
 
@@ -281,6 +298,53 @@ struct Loop {
         }
         roomState = room
         return .carryOn
+    }
+
+    /// The gate. Enter is deliberately unbound: the user got here by pressing Enter on
+    /// the list, and a second one must not roll straight through the warning.
+    private mutating func handleConfirm(_ key: Key) -> Outcome {
+        guard let confirm = list.confirm else {
+            screen = .list
+            return .carryOn
+        }
+
+        switch confirm.stage {
+        case .asking:
+            switch key {
+            case .control("c"):
+                return .quit
+            case .char("y"), .char("Y"):
+                list.confirm?.stage = .opening(step: 0)
+                submit(.openWindow(title: confirm.title))
+            case .char("n"), .char("N"), .escape:
+                dismissConfirm()
+            default:
+                break
+            }
+        case .opening:
+            // Keys are dead while KakaoTalk has the front and a click is in flight;
+            // Ctrl-C still works because it arrives as a signal, not as a key.
+            if case .control("c") = key { return .quit }
+        case .failed:
+            switch key {
+            case .control("c"):
+                return .quit
+            case .char("r"), .char("R"):
+                dismissConfirm()
+                rescan()
+            case .escape, .char("n"), .char("N"):
+                dismissConfirm()
+            default:
+                break
+            }
+        }
+        return .carryOn
+    }
+
+    private mutating func dismissConfirm() {
+        list.confirm = nil
+        screen = .list
+        lastFrame = []
     }
 
     private mutating func handleWaiting(_ key: Key) -> Outcome {
@@ -389,7 +453,7 @@ struct Loop {
         let slow = LinkState.slow(since: running.startedAt)
 
         switch screen {
-        case .list:
+        case .list, .confirm:
             list.note = text
             list.link = tier == .stuck ? down : slow
         case .room:
@@ -403,7 +467,7 @@ struct Loop {
 
     private mutating func say(_ note: String) {
         switch screen {
-        case .list: list.note = note
+        case .list, .confirm: list.note = note
         case .room: roomState?.note = note
         case .waiting: break
         }
@@ -438,7 +502,7 @@ struct Loop {
             rows = tooSmall(size)
         } else {
             switch screen {
-            case .list: rows = ListScreen.render(list).render()
+            case .list, .confirm: rows = ListScreen.render(list).render()
             case .room: rows = RoomScreen.render(roomState ?? RoomState(title: "")).render()
             case .waiting: rows = waitingFrame()
             }

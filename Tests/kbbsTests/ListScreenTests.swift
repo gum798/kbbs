@@ -296,4 +296,68 @@ extension ListScreenTests {
         XCTAssertTrue(row.contains("▶"), row)
     }
 
+    // MARK: - The consent gate
+
+    /// Drawn as an inner box over the list so the user keeps their place, and never
+    /// entered implicitly — opening a room is the one thing kbbs does that takes over the
+    /// screen and the mouse.
+    func testTheGateNamesTheRoomAndWhatWillHappen() {
+        var s = state(13)
+        s.confirm = ConfirmBox(title: "어머니", stage: .asking)
+        let rows = plain(ListScreen.render(s).render())
+        XCTAssertTrue(rows.contains { $0.contains("어머니") && $0.contains("주의") }, "no warning naming the room")
+        XCTAssertTrue(rows.contains { $0.contains("두 번") }, "the double-click is not disclosed")
+        XCTAssertTrue(rows.contains { $0.contains("마우스") }, "the mouse is not disclosed")
+    }
+
+    /// Enter is deliberately not offered: a second Enter from the list would otherwise
+    /// roll straight through the gate it just opened.
+    func testTheGateOffersYAndNButNotEnter() {
+        var s = state(13)
+        s.confirm = ConfirmBox(title: "어머니", stage: .asking)
+        let rows = plain(ListScreen.render(s).render())
+        XCTAssertTrue(rows.contains { $0.contains("Y") && $0.contains("N") })
+        XCTAssertFalse(rows.contains { $0.contains("Enter") }, "Enter must not be bound here")
+    }
+
+    func testTheGateKeepsTheFrameIntact() {
+        var s = state(27)
+        s.confirm = ConfirmBox(title: "고등학교 3학년 2반 동창회", stage: .asking)
+        for (i, row) in plain(ListScreen.render(s).render()).enumerated() {
+            XCTAssertEqual(Width.cells(row), 80, "row \(i)")
+        }
+    }
+
+    /// While it works, the box becomes a ladder — the same four steps, with the one it is
+    /// on marked, so a click that never lands is visible as the step it stopped at.
+    func testTheOpeningLadderShowsWhichStepItIsOn() {
+        var s = state(13)
+        s.confirm = ConfirmBox(title: "어머니", stage: .opening(step: 2))
+        let rows = plain(ListScreen.render(s).render())
+        XCTAssertTrue(rows.contains { $0.contains("창 여는 중") })
+        XCTAssertTrue(rows.contains { $0.contains("행 좌표 확인") })
+    }
+
+    func testAFailedOpenSaysWhatToDoInstead() {
+        var s = state(13)
+        s.confirm = ConfirmBox(title: "어머니", stage: .failed(reason: "행이 화면 밖에 있습니다"))
+        let rows = plain(ListScreen.render(s).render())
+        XCTAssertTrue(rows.contains { $0.contains("행이 화면 밖에 있습니다") })
+        XCTAssertTrue(rows.contains { $0.contains("직접") }, "it should say to open it by hand")
+    }
+
+    func testWithoutAGateTheListIsUnchanged() {
+        let without = plain(ListScreen.render(state(13)).render())
+        XCTAssertFalse(without.contains { $0.contains("주의") })
+    }
+
+    /// Not an assertion — prints the gate so a human can look at it.
+    func testPrintTheGateForEyeballing() {
+        guard ProcessInfo.processInfo.environment["KBBS_EYEBALL"] != nil else { return }
+        var s = state(27)
+        s.cursor = 2
+        s.confirm = ConfirmBox(title: "어머니", stage: .asking)
+        for row in plain(ListScreen.render(s).render()) { print(row) }
+    }
+
 }
