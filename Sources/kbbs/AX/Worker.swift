@@ -326,13 +326,15 @@ final class AXWorker: @unchecked Sendable {
     /// Four steps, each reported so a click that never lands is visible as the step it
     /// stopped on. The terminal gets the front back at the end whatever happened.
     private func openWindow(titled title: String) -> AXResult {
-        // A row can go missing because the list scrolled, was re-scanned, or was never
-        // handed over. Re-scanning is cheap next to failing in front of the user.
-        if rows[title] == nil, let listWindow {
+        // The list reorders whenever a message arrives, and the table REUSES its row
+        // views — so a handle kept from an earlier scan can now be showing a different
+        // conversation entirely, and clicking it opens that one. Every open therefore
+        // checks the row still says what it said, and re-scans when it does not.
+        if rows[title] == nil || !Self.row(rows[title]!, stillShows: title), let listWindow {
             let found = scanner.scan(in: listWindow, limit: 60, trace: nil)
             rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
         }
-        guard let row = rows[title] else {
+        guard let row = rows[title], Self.row(row, stillShows: title) else {
             return .openFailed(title: title, reason: "목록에서 그 행을 찾지 못했습니다")
         }
 
@@ -421,6 +423,14 @@ final class AXWorker: @unchecked Sendable {
             contexts[token] = opened
             return token
         }
+    }
+
+    /// Whether this row element still displays the conversation it was found for.
+    ///
+    /// Cheap on purpose — a handful of queries against one row, next to a full re-scan.
+    static func row(_ row: UIElement, stillShows title: String) -> Bool {
+        let texts = row.findAll(role: kAXStaticTextRole, limit: 6, maxNodes: 60)
+        return texts.contains { ($0.stringValue ?? $0.title ?? "") == title }
     }
 
     /// Forget a context the main thread has finished with. The handle dies here, on the

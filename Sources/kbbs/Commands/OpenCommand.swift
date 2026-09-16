@@ -80,6 +80,10 @@ struct OpenCommand: ParsableCommand {
         Thread.sleep(forTimeInterval: 0.2)
         print("목록 창 올림   \(listWindow.frame.map { "x=\(Int($0.minX)) y=\(Int($0.minY)) w=\(Int($0.width)) h=\(Int($0.height))" } ?? "프레임 없음")")
 
+        guard AXWorker.row(row, stillShows: room) else {
+            print("행 확인       그 행은 이제 다른 방입니다 (목록이 바뀌었습니다)")
+            throw ExitCode.failure
+        }
         let fresh = row.frame
         print("행 프레임 재확인 \(fresh.map { "y=\(Int($0.minY))" } ?? "없음")")
         guard let point = RowClickGuard.clickPoint(rowFrame: fresh, visibleScreens: screens) else {

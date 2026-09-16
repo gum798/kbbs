@@ -26,6 +26,9 @@ struct ProbeSendCommand: ParsableCommand {
     @Flag(name: .long, help: "창을 최소화한 뒤에도 읽히는지 본다 (원래 상태로 되돌린다)")
     var minimized = false
 
+    @Flag(name: .long, help: "위로 스크롤한 뒤에도 새 메시지가 보이는지 본다")
+    var scrolled = false
+
     @Flag(name: .long, help: "접근성 호출을 표준오류로 남긴다")
     var trace = false
 
@@ -50,6 +53,11 @@ struct ProbeSendCommand: ParsableCommand {
             print("입력창을 찾지 못했습니다.")
             throw ExitCode.failure
         }
+        if scrolled {
+            try probeScrolled(kakao: kakao, window: window, context: context, runner: runner)
+            return
+        }
+
         if minimized {
             try probeMinimized(kakao: kakao, window: window, runner: runner)
             return
@@ -114,6 +122,48 @@ struct ProbeSendCommand: ParsableCommand {
         }
     }
 
+    /// Does a window that is not scrolled to the bottom still show new messages?
+    private func probeScrolled(
+        kakao: KakaoTalkApp,
+        window: UIElement,
+        context: MessageTranscriptContext,
+        runner: AXActionRunner
+    ) throws {
+        let reader = KakaoTalkTranscriptReader(kakao: kakao, runner: runner, interactionMode: .backgroundSafe)
+        func read() -> [String] {
+            ((try? reader.readSnapshot(from: context, chatWindow: window, fallbackChatTitle: room, limit: 20))?
+                .messages.map(\.body)) ?? []
+        }
+
+        let before = read()
+        print("스크롤 전   \(before.count)개")
+
+        for _ in 0..<3 { try? context.transcriptRoot.performAction("AXScrollUpByPage") }
+        Thread.sleep(forTimeInterval: 0.5)
+        print("위로 스크롤 완료")
+
+        let stamp = "kbbs 스크롤 확인 \(Int(Date().timeIntervalSince1970) % 10000)"
+        try Sender(trace: trace).send(stamp, window: window, context: context)
+        print("보냄        \"\(stamp)\"")
+        Thread.sleep(forTimeInterval: 2.0)
+
+        let after = read()
+        let seen = after.contains { $0.contains(stamp) }
+        print("스크롤 상태에서 읽기  \(after.count)개 · 방금 보낸 것 \(seen ? "보임" : "안 보임")")
+
+        for _ in 0..<5 { try? context.transcriptRoot.performAction("AXScrollDownByPage") }
+        Thread.sleep(forTimeInterval: 0.5)
+        let recovered = read()
+        let seenAfter = recovered.contains { $0.contains(stamp) }
+        print("아래로 내린 뒤        \(recovered.count)개 · 방금 보낸 것 \(seenAfter ? "보임" : "안 보임")")
+        print("")
+        print(seen
+            ? "스크롤 위치와 무관하게 보입니다."
+            : (seenAfter
+               ? "스크롤을 내려야 보입니다 — 읽기 전에 맨 아래로 내려야 합니다."
+               : "내려도 안 보입니다. 원인이 스크롤이 아닙니다."))
+    }
+
     /// Can a minimized window still be read? The design assumed not and built a whole
     /// consent gate around opening windows; nobody had checked.
     private func probeMinimized(kakao: KakaoTalkApp, window: UIElement, runner: AXActionRunner) throws {
@@ -127,6 +177,23 @@ struct ProbeSendCommand: ParsableCommand {
 
         let after = (try? reader.readSnapshot(from: window, fallbackChatTitle: room, limit: 10).count) ?? 0
         print("최소화 후  \(after)개 읽음")
+        print("최소화 후 제목  \(window.title.map { "「\($0)」" } ?? "없음")")
+        print("최소화 후 창목록  " + kakao.windows.map { "「\($0.title ?? "-")」" }.joined(separator: " "))
+        print("제목으로 다시 찾기  \(kakao.windows.contains { $0.role == kAXWindowRole && $0.title == room } ? "찾음" : "못 찾음")")
+
+        // The case that matters most: does a message that ARRIVES while the window is
+        // hidden ever reach the Accessibility tree? Reading old content proves nothing
+        // about that, and a room kbbs opened is minimized for the rest of the session.
+        let reader2 = KakaoTalkTranscriptReader(kakao: kakao, runner: runner, interactionMode: .backgroundSafe)
+        if let context = MessageContextResolver(kakao: kakao, runner: runner, interactionMode: .backgroundSafe)
+            .resolve(in: window), (context.inputElement.stringValue ?? "").isEmpty {
+            let stamp = "kbbs 최소화 확인 \(Int(Date().timeIntervalSince1970) % 10000)"
+            try? Sender(trace: trace).send(stamp, window: window, context: context)
+            Thread.sleep(forTimeInterval: 2.5)
+            let arrived = ((try? reader2.readSnapshot(from: context, chatWindow: window, fallbackChatTitle: room, limit: 20))?
+                .messages.map(\.body).contains { $0.contains(stamp) }) ?? false
+            print("최소화 중 도착한 메시지  \(arrived ? "보임" : "안 보임")")
+        }
 
         // Reading is only half of it: auto-minimising would break sending if the composer
         // stops accepting a value, or the button stops enabling, while hidden.
