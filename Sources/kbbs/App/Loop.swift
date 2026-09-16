@@ -39,6 +39,7 @@ struct Loop {
 
     private var decoder = KeyDecoder()
     private var lastFrame: [String] = []
+    private var lastCaret: Int?
 
     private var escapePendingSince: Date?
     private var bufferTouchedAt: Date?
@@ -134,21 +135,21 @@ struct Loop {
 
     private mutating func apply(_ result: AXResult) {
         switch result {
-        case .list(let rooms, let source, let elapsed):
+        case .list(let rooms, let source, _):
             list.rooms = rooms
             list.source = source
             list.page = min(list.page, list.pageCount - 1)
             list.cursor = min(list.cursor, max(0, list.roomsOnPage - 1))
             list.link = .live(lastRefresh: Date())
-            say(String(format: "%d개 · %.1f초", rooms.count, elapsed) + (source == .chatList ? "" : " · 열린 창만"))
+            if source != .chatList { say("열린 창만") } else { list.note = nil }
             nextListPoll = Date().addingTimeInterval(Self.listPoll)
 
-        case .opened(let token, let title, let matched, let elapsed):
+        case .opened(let token, let title, let matched, _):
             roomToken = token
             var state = RoomState(title: title)
             state.matchedWindowTitle = matched
             state.link = .live(lastRefresh: Date())
-            state.note = String(format: "열기 %.1f초 · 읽는 중…", elapsed)
+            state.note = "읽는 중…"
             roomState = state
             waiting = nil
             list.confirm = nil
@@ -158,7 +159,7 @@ struct Loop {
             lastFrame = []
             submit(.readRoom(token: token, title: title, limit: Self.roomReadLimit))
 
-        case .read(let token, let snapshot, let elapsed):
+        case .read(let token, let snapshot, _):
             guard roomToken == token, var room = roomState else { break }
             readFailures = 0
             lastGoodRead = Date()
@@ -172,8 +173,9 @@ struct Loop {
             room.pending = ledger.entries
             room.link = .live(lastRefresh: Date())
             room.pollSeconds = Self.roomPoll
-            room.note = String(format: "%d개 · 읽기 %.1f초", snapshot.count, elapsed)
-            noteSetAt = Date()
+            if room.note?.hasPrefix("읽는 중") == true || room.note?.hasPrefix("열기") == true {
+                room.note = nil
+            }
             roomState = room
             nextRoomPoll = Date().addingTimeInterval(Self.roomPoll)
 
@@ -198,8 +200,10 @@ struct Loop {
             lastFrame = []
 
         case .sent(_, let cleared):
-            roomState?.note = cleared ? "보냈습니다 — 전사에서 확인 중" : "눌렀지만 입력창에 남아 있습니다. 다시 보내지 마세요."
-            noteSetAt = Date()
+            if !cleared {
+                roomState?.note = "입력창에 남아 있습니다. 다시 보내지 마세요."
+                noteSetAt = Date()
+            }
             nextRoomPoll = Date().addingTimeInterval(1.0)
 
         case .sendRefused(let body, let reason):
@@ -614,13 +618,26 @@ struct Loop {
             )).render()
             }
         }
-        guard rows != lastFrame else { return }
+        let caret = screen == .room ? roomState.map { RoomScreen.caretColumn($0) } : nil
+        guard rows != lastFrame || caret != lastCaret else { return }
+        let previous = lastFrame
         lastFrame = rows
+        lastCaret = caret
 
-        var out = "\u{1B}[H"
-        for (index, row) in rows.enumerated() {
-            out += row + "\u{1B}[K"
-            if index < rows.count - 1 { out += "\r\n" }
+        // Only the rows that changed. Not a size optimisation: the input method draws the
+        // syllable it is composing straight onto the screen at the cursor, and rewriting
+        // the composer row — which the ticking clock would otherwise do once a second —
+        // wipes it mid-keystroke.
+        var out = ""
+        for (index, row) in rows.enumerated() where index >= previous.count || previous[index] != row {
+            out += "\u{1B}[\(index + 1);1H" + row + "\u{1B}[K"
+        }
+        // The cursor is where the input method composes, so on the conversation screen it
+        // has to sit in the composer and be visible. Everywhere else it is noise.
+        if screen == .room, let room = roomState, size.isBigEnough {
+            out += "\u{1B}[\(RoomScreen.caretRow);\(RoomScreen.caretColumn(room))H\u{1B}[?25h"
+        } else {
+            out += "\u{1B}[?25l"
         }
         TTYOut.write(out)
     }

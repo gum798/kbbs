@@ -70,13 +70,6 @@ final class RoomScreenTests: XCTestCase {
 
     // MARK: - What the transcript says
 
-    /// Not a scroll indicator. It is the literal edge of what KakaoTalk has rendered,
-    /// and therefore of what can ever be read, so it is permanent rather than transient.
-    func testTheEndOfTapeRuleIsAlwaysThere() {
-        let rows = plain(RoomScreen.render(state([message("안녕", author: "김민수")])).render())
-        XCTAssertTrue(rows[3].contains("여기까지"), rows[3])
-    }
-
     func testTheNewestMessageIsAtTheBottomOfTheTranscript() {
         let rows = plain(RoomScreen.render(state([
             message("먼저 온 말", author: "김민수"),
@@ -156,11 +149,12 @@ final class RoomScreenTests: XCTestCase {
         XCTAssertTrue(rows[22].contains("Esc:목록"), rows[22])
     }
 
-    func testANoteReachesTheNoticeBand() {
+    /// There is no status band any more, so a note that matters shares the hotkey row.
+    func testANoteReachesTheHotkeyRow() {
         var s = state([])
-        s.note = "읽는 중…"
+        s.note = "입력창에 남아 있습니다"
         let rows = plain(RoomScreen.render(s).render())
-        XCTAssertTrue(rows[17].contains("읽는 중…"), rows[17])
+        XCTAssertTrue(rows[22].contains("입력창에 남아 있습니다"), rows[22])
     }
 
     func testALongComposerKeepsTheFrame() {
@@ -224,5 +218,40 @@ final class RoomScreenTests: XCTestCase {
         }
     }
 
+
+    // MARK: - Where the terminal cursor goes
+
+    /// The IME draws what it is composing at the TERMINAL's cursor, not at the caret kbbs
+    /// paints. With the cursor parked wherever the last write left it, a half-typed
+    /// Hangul syllable appeared outside the frame entirely.
+    func testTheCaretColumnOfAnEmptyComposer() {
+        XCTAssertEqual(RoomScreen.caretColumn(state([])), 9)
+    }
+
+    func testTheCaretMovesPastWhatHasBeenTyped() {
+        var s = state([])
+        s.composer = "abc"
+        XCTAssertEqual(RoomScreen.caretColumn(s), 12)
+    }
+
+    /// Two cells per Hangul syllable, or the cursor drifts left of the text it follows.
+    func testTheCaretCountsHangulAsTwoCells() {
+        var s = state([])
+        s.composer = "안녕"
+        XCTAssertEqual(RoomScreen.caretColumn(s), 13)
+    }
+
+    func testTheCaretStaysOnScreenForALongLine() {
+        var s = state([])
+        s.composer = String(repeating: "가", count: 200)
+        let column = RoomScreen.caretColumn(s)
+        XCTAssertGreaterThan(column, 1)
+        XCTAssertLessThanOrEqual(column, 80)
+    }
+
+    /// The row the cursor belongs on, 1-based for the terminal.
+    func testTheComposerRowIsWhereTheComposerIs() {
+        XCTAssertEqual(RoomScreen.caretRow, 21)
+    }
 
 }

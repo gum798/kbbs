@@ -48,14 +48,12 @@ enum RoomScreen {
     }
 
     private static let rowTitle = 1
-    private static let rowEndOfTape = 3
-    private static let transcriptRows = 4...15
+    private static let transcriptRows = 3...18
 
     /// Lines of conversation the screen can hold. The reader is asked for messages in
     /// proportion to this and nothing more — reading sixty to draw twelve is where the
     /// seconds went.
     static var visibleLines: Int { transcriptRows.count }
-    private static let rowNotice = 17
     private static let rowComposer = 20
     private static let rowHotkeys = 22
 
@@ -66,15 +64,11 @@ enum RoomScreen {
         f.set(rowTitle, bordered(titleBar(state)))
         f.set(2, Frame.rule(left: "╠", fill: "═", right: "╣", width: width))
 
-        f.set(rowEndOfTape, bordered(endOfTape()))
         let lines = transcriptLines(state)
         for (offset, row) in transcriptRows.enumerated() {
             f.set(row, bordered(offset < lines.count ? lines[offset] : ""))
         }
 
-        f.set(16, Frame.rule(left: "╠", fill: "═", right: "╣", width: width))
-        f.set(rowNotice, bordered(noticeLine(state)))
-        f.set(18, bordered(""))
         f.set(19, Frame.rule(left: "╠", fill: "═", right: "╣", width: width))
         f.set(rowComposer, bordered(composerLine(state)))
         f.set(21, Frame.rule(left: "╠", fill: "═", right: "╣", width: width))
@@ -94,16 +88,6 @@ enum RoomScreen {
         let right = Theme.stamp(state.clock) + "  "
         let gap = max(1, inner - Width.cells(left) - Width.cells(right))
         return left + String(repeating: " ", count: gap) + right
-    }
-
-    /// Not a scroll position. KakaoTalk only exposes what it has rendered, so this is the
-    /// literal edge of everything that can ever be read — permanent, not a warning.
-    private static func endOfTape() -> String {
-        let text = " 여기까지가 카카오톡에 남아 있는 전부입니다 "
-        let fill = max(0, inner - Width.cells(text) - 2)
-        let left = fill / 2
-        return " " + String(repeating: "─", count: left) + text
-            + String(repeating: "─", count: fill - left) + " "
     }
 
     private static func transcriptLines(_ state: RoomState) -> [String] {
@@ -176,31 +160,42 @@ enum RoomScreen {
         return ""
     }
 
-    private static func noticeLine(_ state: RoomState) -> String {
-        if let note = state.note, !note.isEmpty {
-            return "  " + Width.elide(note, to: inner - 4)
-        }
-        let cadence = state.pollSeconds.map { String(format: "%.0f초주기", $0) } ?? "대기"
-        var text = "  " + Theme.lineIndicator(state.clock) + " 회선감시 " + cadence
-        if let matched = state.matchedWindowTitle {
-            text += " · 창 「" + Width.elide(matched, to: 20) + "」"
-        }
-        return Width.truncate(text, to: inner)
-    }
+    private static let prompt = " 입력> "
 
     private static func composerLine(_ state: RoomState) -> String {
-        // The caret must stay visible, so a long line scrolls rather than wrapping.
-        let budget = inner - 8
-        let visible = Width.cells(state.composer) > budget
-            ? String(Width.truncate(String(state.composer.reversed()), to: budget).reversed())
-            : state.composer
-        return " 입력> " + Width.pad(visible + "_", to: budget)
+        prompt + Width.pad(visibleComposer(state), to: inner - Width.cells(prompt))
     }
 
-    private static func hotkeyLine(_ state: RoomState) -> String {
-        let keys = "  Enter:전송  Esc:목록  R:새로고침  Q:종료"
-        let clock = Theme.clock(state.clock) + "  "
-        let gap = max(1, inner - Width.cells(keys) - Width.cells(clock))
-        return keys + String(repeating: " ", count: gap) + clock
+    /// What fits of the composer, from the end, so the caret is always on screen.
+    private static func visibleComposer(_ state: RoomState) -> String {
+        let budget = inner - Width.cells(prompt) - 1
+        guard Width.cells(state.composer) > budget else { return state.composer }
+        return String(Width.truncate(String(state.composer.reversed()), to: budget).reversed())
     }
+
+    /// The terminal's own cursor belongs here, because the input method draws what it is
+    /// composing at the cursor — not at the caret this screen paints. Park it anywhere
+    /// else and a half-typed Hangul syllable appears there instead.
+    static let caretRow = rowComposer + 1
+
+    static func caretColumn(_ state: RoomState) -> Int {
+        1 + Width.cells(prompt) + Width.cells(visibleComposer(state)) + 1
+    }
+
+    /// The hotkeys, or — while there is something to say — the note in their place.
+    ///
+    /// A note here is transient and usually a failure, so it gets the whole row rather
+    /// than the eleven cells left over beside the key list.
+    private static func hotkeyLine(_ state: RoomState) -> String {
+        let right = Theme.lineIndicator(state.clock) + " " + Theme.clock(state.clock) + "  "
+        let left: String
+        if let note = state.note, !note.isEmpty {
+            left = "  " + Width.elide(note, to: inner - Width.cells(right) - 4)
+        } else {
+            left = "  Enter:전송  Esc:목록  R:새로고침  Q:종료"
+        }
+        let gap = max(1, inner - Width.cells(left) - Width.cells(right))
+        return left + String(repeating: " ", count: gap) + right
+    }
+
 }
