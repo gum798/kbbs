@@ -187,4 +187,13 @@ struct ConfirmBox {
 
     let title: String
     var stage: Stage
+    var openedAt = Date()
+
+    /// The gate is reached BY pressing Enter, so an Enter that arrives with it is the
+    /// same keystroke arriving twice — a double tap, or a key still held down — and
+    /// taking it would carry the user straight through the warning they just raised.
+    func acceptsEnter(at now: Date = Date()) -> Bool {
+        guard case .asking = stage else { return false }
+        return now.timeIntervalSince(openedAt) >= 0.4
+    }
 }

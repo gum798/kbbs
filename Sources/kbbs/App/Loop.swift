@@ -206,6 +206,15 @@ struct Loop {
             }
             nextRoomPoll = Date().addingTimeInterval(1.0)
 
+        case .closed(let title, let reason):
+            if let reason {
+                say("「\(title)」 창을 닫지 못했습니다: \(reason)")
+            } else {
+                list.rooms = list.rooms.map {
+                    $0.title == title ? Room(title: $0.title, lastMessage: $0.lastMessage, timeLabel: $0.timeLabel, unreadCount: $0.unreadCount, hasWindow: false) : $0
+                }
+            }
+
         case .sendRefused(let body, let reason):
             // Every refusal happens before the press, so nothing was sent — the text is
             // handed back to the composer rather than lost.
@@ -299,10 +308,15 @@ struct Loop {
         switch Hotkey.command(for: key) {
         case .quit: return .quit
         case .refresh: rescan(); return .carryOn
+        case .closeWindow:
+            if let index = list.selectedRoomIndex, list.rooms[index].hasWindow {
+                submit(.closeWindow(title: list.rooms[index].title))
+            }
+            return .carryOn
         case .pagePrevious: list.pageBack(); return .carryOn
         case .pageNext: list.pageForward(); return .carryOn
         case .repaint: lastFrame = []; return .carryOn
-        case .yes, .none: break
+        case .none: break
         }
 
         switch key {
@@ -348,6 +362,12 @@ struct Loop {
         case .repaint:
             lastFrame = []
             return .carryOn
+        case .closeWindow:
+            if let title = roomState?.title {
+                submit(.closeWindow(title: title))
+                leaveRoom()
+            }
+            return .carryOn
         case .refresh:
             if let token = roomToken {
                 room.note = "읽는 중…"
@@ -355,7 +375,7 @@ struct Loop {
                 submit(.readRoom(token: token, title: room.title, limit: Self.roomReadLimit))
             }
             return .carryOn
-        case .pagePrevious, .pageNext, .yes, .none:
+        case .pagePrevious, .pageNext, .none:
             break
         }
 
@@ -399,16 +419,15 @@ struct Loop {
 
         switch confirm.stage {
         case .asking:
-            // N is "아니오" here, not "다음 쪽" — paging has no meaning over a modal.
-            switch Hotkey.command(for: key) {
-            case .quit: return .quit
-            case .yes:
+            if Hotkey.command(for: key) == .quit { return .quit }
+            switch key {
+            case .enter where confirm.acceptsEnter():
                 list.confirm?.stage = .opening(step: 0)
                 submit(.openWindow(title: confirm.title))
-            case .pageNext:
+            case .escape:
                 dismissConfirm()
             default:
-                if case .escape = key { dismissConfirm() }
+                break
             }
         case .opening:
             // Keys are dead while KakaoTalk has the front and a click is in flight;
@@ -420,8 +439,6 @@ struct Loop {
             case .refresh:
                 dismissConfirm()
                 rescan()
-            case .pageNext:
-                dismissConfirm()
             default:
                 if case .escape = key { dismissConfirm() }
             }

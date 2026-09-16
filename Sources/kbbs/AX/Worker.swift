@@ -14,6 +14,7 @@ enum AXJob: Sendable {
     /// Y to the gate that spells out what it does.
     case openWindow(title: String)
     case send(token: Int, body: String)
+    case closeWindow(title: String)
 }
 
 /// A finished job, reduced to things that are safe to hand to the main thread.
@@ -27,6 +28,7 @@ enum AXResult: Sendable {
     case openFailed(title: String, reason: String)
     case sent(body: String, composerCleared: Bool)
     case sendRefused(body: String, reason: String)
+    case closed(title: String, reason: String?)
     case failed(reason: String)
 }
 
@@ -216,6 +218,7 @@ final class AXWorker: @unchecked Sendable {
         case .readRoom: return "대화 읽기"
         case .openWindow: return "창 열기"
         case .send: return "전송"
+        case .closeWindow: return "창 닫기"
         }
     }
 
@@ -294,6 +297,14 @@ final class AXWorker: @unchecked Sendable {
                 return .sent(body: body, composerCleared: outcome == .composerCleared)
             } catch {
                 return .sendRefused(body: body, reason: "\(error)")
+            }
+
+        case .closeWindow(let title):
+            do {
+                try WindowCloser(kakao: kakao).close(title: title)
+                return .closed(title: title, reason: nil)
+            } catch {
+                return .closed(title: title, reason: "\(error)")
             }
         }
     }

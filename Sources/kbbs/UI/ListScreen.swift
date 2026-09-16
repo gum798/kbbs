@@ -100,7 +100,7 @@ enum ListScreen {
                 "카카오톡이 앞으로 나와 목록의 해당 줄을 두 번 누릅니다.",
                 "그동안 마우스와 키보드를 건드리지 마세요.",
                 "",
-                "  Y = 열기          N / Esc = 취소",
+                "  Enter = 열기          Esc = 취소",
             ]
         case .opening(let step):
             heading = "창 여는 중 — 「\(Width.elide(confirm.title, to: 24))」"
@@ -213,7 +213,7 @@ enum ListScreen {
     /// spare: 24 lines are all accounted for. A note longer than the gap is truncated
     /// rather than pushing the hotkeys off the left.
     private static func hotkeyLine(_ state: ListState) -> String {
-        let keys = "  P:이전  N:다음  R:새로고침  Q:종료"
+        let keys = "  P:이전  N:다음  R:새로고침  W:창닫기  Q:종료"
         guard let note = state.note, !note.isEmpty else { return keys }
         let spare = inner - Width.cells(keys) - 2
         guard spare > 2 else { return keys }

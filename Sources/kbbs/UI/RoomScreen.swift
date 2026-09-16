@@ -188,7 +188,7 @@ enum RoomScreen {
         if let note = state.note, !note.isEmpty {
             left = "  " + Width.elide(note, to: inner - Width.cells(right) - 4)
         } else {
-            left = "  Enter:전송  Esc:목록  R:새로고침  Q:종료"
+            left = "  Enter:전송  Esc:목록  R:새로고침  W:창닫기  Q:종료"
         }
         let gap = max(1, inner - Width.cells(left) - Width.cells(right))
         return left + String(repeating: " ", count: gap) + right

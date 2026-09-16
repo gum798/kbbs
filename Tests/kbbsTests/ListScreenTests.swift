@@ -310,14 +310,14 @@ extension ListScreenTests {
         XCTAssertTrue(rows.contains { $0.contains("마우스") }, "the mouse is not disclosed")
     }
 
-    /// Enter is deliberately not offered: a second Enter from the list would otherwise
-    /// roll straight through the gate it just opened.
-    func testTheGateOffersYAndNButNotEnter() {
+    /// Enter confirms and Esc cancels. The keystroke that opened the gate is kept out by
+    /// a grace period rather than by refusing the key — see `ConfirmBoxTests`.
+    func testTheGateOffersEnterAndEsc() {
         var s = state(13)
         s.confirm = ConfirmBox(title: "어머니", stage: .asking)
         let rows = plain(ListScreen.render(s).render())
-        XCTAssertTrue(rows.contains { $0.contains("Y") && $0.contains("N") })
-        XCTAssertFalse(rows.contains { $0.contains("Enter") }, "Enter must not be bound here")
+        XCTAssertTrue(rows.contains { $0.contains("Enter") && $0.contains("열기") })
+        XCTAssertTrue(rows.contains { $0.contains("Esc") && $0.contains("취소") })
     }
 
     func testTheGateKeepsTheFrameIntact() {

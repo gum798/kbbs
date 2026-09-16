@@ -35,6 +35,7 @@ struct Kbbs: ParsableCommand {
             InspectCommand.self,
             ProbeSendCommand.self,
             SendCommand.self,
+            CloseCommand.self,
         ]
     )
 

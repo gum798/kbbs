@@ -11,7 +11,7 @@ enum Hotkey: Equatable {
     case pagePrevious
     case pageNext
     case repaint
-    case yes
+    case closeWindow
 
     /// `composerEmpty` is false only on a screen with something typed into it, where a
     /// letter command would cost the user their text. Ctrl-C ignores it.
@@ -36,7 +36,7 @@ enum Hotkey: Equatable {
         case .char("R"): return .refresh
         case .char("P"): return .pagePrevious
         case .char("N"): return .pageNext
-        case .char("Y"): return .yes
+        case .char("W"): return .closeWindow
         default: return nil
         }
     }
