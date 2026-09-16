@@ -200,4 +200,19 @@ final class RoomScreenTests: XCTestCase {
         }
     }
 
+    /// KakaoTalk stamps transcript rows "오후 1:21" too, and the 시각 column is five
+    /// cells. Without compacting, every row on the screen read just "오후".
+    func testTheTimeColumnShowsAClockNotAMeridiem() {
+        let rows = plain(RoomScreen.render(state([
+            message("안녕", author: "김민수", time: "오후 1:21"),
+        ])).render())
+        XCTAssertTrue(rows.contains { $0.contains("13:21") }, "\(rows)")
+        XCTAssertFalse(rows.contains { $0.contains("오후") }, "the meridiem is still there")
+    }
+
+    func testATwentyFourHourStampIsLeftAlone() {
+        let rows = plain(RoomScreen.render(state([message("안녕", author: "김민수", time: "21:03")])).render())
+        XCTAssertTrue(rows.contains { $0.contains("21:03") })
+    }
+
 }

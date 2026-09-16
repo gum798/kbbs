@@ -8,13 +8,19 @@ import XCTest
 /// the same message twice in a row is not a duplicate, it is how people talk.
 final class TranscriptMergeTests: XCTestCase {
 
-    private func message(_ body: String, author: String? = nil, time: String? = "13:20") -> TranscriptMessage {
+    private func message(
+        _ body: String,
+        author: String? = nil,
+        time: String? = "13:20",
+        y: Double? = nil
+    ) -> TranscriptMessage {
         TranscriptMessage(
             author: author,
             timeRaw: time,
             body: body,
             isSystem: false,
-            logicalTimestamp: nil
+            logicalTimestamp: nil,
+            orderKey: y
         )
     }
 
@@ -72,6 +78,51 @@ final class TranscriptMergeTests: XCTestCase {
         let rows = [message("네", author: "김민수"), message("네", author: "이수진")]
         XCTAssertEqual(TranscriptMerge.merge(rowMessages: rows, fallback: []).count, 2)
     }
+    // MARK: - Order
+
+    /// Order is where KakaoTalk drew it, top to bottom — NOT the clock. A message from an
+    /// earlier day carries a later time of day and still belongs above, which is exactly
+    /// what a time sort got wrong on a real transcript.
+    func testMessagesComeOutInScreenOrder() {
+        let merged = TranscriptMerge.merge(
+            rowMessages: [
+                message("아래", y: 900),
+                message("위", y: 100),
+                message("가운데", y: 500),
+            ],
+            fallback: []
+        )
+        XCTAssertEqual(merged.map(\.body), ["위", "가운데", "아래"])
+    }
+
+    func testMessagesAtTheSameHeightKeepTheOrderTheyWereRead() {
+        let merged = TranscriptMerge.merge(
+            rowMessages: [message("먼저", y: 100), message("나중", y: 100)],
+            fallback: []
+        )
+        XCTAssertEqual(merged.map(\.body), ["먼저", "나중"])
+    }
+
+    /// A row whose position could not be read belongs next to what it was found beside,
+    /// not flung to one end.
+    func testARowWithNoPositionStaysWhereItWasFound() {
+        let merged = TranscriptMerge.merge(
+            rowMessages: [message("위", y: 100), message("위치 없음"), message("아래", y: 500)],
+            fallback: []
+        )
+        XCTAssertEqual(merged.map(\.body), ["위", "위치 없음", "아래"])
+    }
+
+    /// The bug this was found by: the fallback sweep picks up a message the row parser
+    /// missed, and appending it blindly put a message from an earlier day underneath
+    /// today's conversation.
+    func testAFallbackExtraGoesWhereItWasOnScreen() {
+        let merged = TranscriptMerge.merge(
+            rowMessages: [message("아래", y: 900)],
+            fallback: [message("위", y: 100)]
+        )
+        XCTAssertEqual(merged.map(\.body), ["위", "아래"])
+    }
 }
 
 /// Who sent a message, and how sure the reader is about it.
@@ -125,4 +176,5 @@ final class TranscriptAttributionTests: XCTestCase {
         XCTAssertNil(json?["authorSource"])
         XCTAssertNil(json?["author_source"])
     }
+
 }

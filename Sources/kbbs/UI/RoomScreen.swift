@@ -151,7 +151,7 @@ enum RoomScreen {
     }
 
     private static func head(_ message: TranscriptMessage) -> String {
-        " " + Width.pad(Width.truncate(message.timeRaw ?? "", to: Col.time), to: Col.time)
+        " " + Width.pad(ChatTextNormalizer.compactTime(message.timeRaw ?? ""), to: Col.time)
             + " " + Width.column(TranscriptAttribution.marker(for: message), to: Col.author)
             + " "
     }

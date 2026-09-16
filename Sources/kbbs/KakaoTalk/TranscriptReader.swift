@@ -21,6 +21,9 @@ struct TranscriptMessage: Encodable, Equatable, Sendable {
     /// "left-time-guard" or "unknown". The screen needs this to tell a confident
     /// attribution from a fallback that looks identical.
     let authorSource: String
+    /// Where KakaoTalk drew this message, top to bottom. THIS is conversation order —
+    /// the clock is not, because a message from an earlier day carries a later time.
+    let orderKey: Double?
 
     var hasImage: Bool {
         imageCount > 0
@@ -53,7 +56,8 @@ struct TranscriptMessage: Encodable, Equatable, Sendable {
         logicalTimestamp: Date?,
         date: String? = nil,
         side: String = "unknown",
-        authorSource: String = "unknown"
+        authorSource: String = "unknown",
+        orderKey: Double? = nil
     ) {
         self.author = author
         self.timeRaw = timeRaw
@@ -66,6 +70,7 @@ struct TranscriptMessage: Encodable, Equatable, Sendable {
         self.date = date
         self.side = side
         self.authorSource = authorSource
+        self.orderKey = orderKey
     }
 
     func encode(to encoder: Encoder) throws {
@@ -373,7 +378,8 @@ struct KakaoTalkTranscriptReader {
                 ),
                 date: resolvedDate,
                 side: side.rawValue,
-                authorSource: resolvedAuthor.source
+                authorSource: resolvedAuthor.source,
+                orderKey: frameCache.frame(of: rowsToAnalyze[offset]).map { Double($0.minY) }
             )
             messages.append(message)
             if selectedLogs < 10 {
@@ -595,7 +601,8 @@ struct KakaoTalkTranscriptReader {
                         dateAnchor: nil,
                         referenceDate: referenceDate
                     ),
-                    date: row.flatMap { axHelpDate(in: $0) }
+                    date: row.flatMap { axHelpDate(in: $0) },
+                    orderKey: (row ?? textArea).frame.map { Double($0.minY) }
                 )
             )
         }
@@ -614,7 +621,8 @@ struct KakaoTalkTranscriptReader {
                             linkCount: max(1, countURLTokens(in: title)),
                             isSystem: false,
                             logicalTimestamp: nil,
-                            date: nil
+                            date: nil,
+                            orderKey: link.frame.map { Double($0.minY) }
                         )
                     )
                 }

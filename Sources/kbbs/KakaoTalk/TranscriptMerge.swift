@@ -19,7 +19,7 @@ enum TranscriptMerge {
     /// copies are matched against the row block and dropped; nothing is ever removed from
     /// within the rows themselves.
     static func merge(rowMessages: [TranscriptMessage], fallback: [TranscriptMessage]) -> [TranscriptMessage] {
-        guard !fallback.isEmpty else { return rowMessages }
+        guard !fallback.isEmpty else { return inScreenOrder(rowMessages) }
 
         var remaining: [String: Int] = [:]
         for message in rowMessages {
@@ -36,7 +36,32 @@ enum TranscriptMerge {
             extras.append(message)
         }
 
-        return rowMessages + extras
+        return inScreenOrder(rowMessages + extras)
+    }
+
+    /// In the order KakaoTalk drew them, top to bottom.
+    ///
+    /// NOT by time. A message from an earlier day carries a later time of day, so a clock
+    /// sort puts yesterday's 15:13 underneath today's 15:01. Position is the order; the
+    /// timestamp is only a label.
+    ///
+    /// A message whose position could not be read inherits the one before it, so it stays
+    /// beside what it was found next to.
+    static func inScreenOrder(_ messages: [TranscriptMessage]) -> [TranscriptMessage] {
+        var carried = -Double.greatestFiniteMagnitude
+        let keyed = messages.map { message -> (TranscriptMessage, Double) in
+            if let key = message.orderKey {
+                carried = key
+            }
+            return (message, carried)
+        }
+        return keyed
+            .enumerated()
+            .sorted { lhs, rhs in
+                if lhs.element.1 == rhs.element.1 { return lhs.offset < rhs.offset }
+                return lhs.element.1 < rhs.element.1
+            }
+            .map(\.element.0)
     }
 
     /// Identity for "is this the same message" — author, minute and body.
