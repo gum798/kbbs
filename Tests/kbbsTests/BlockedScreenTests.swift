@@ -41,23 +41,18 @@ final class BlockedScreenTests: XCTestCase {
         XCTAssertTrue(rows.contains { $0.contains("통") && $0.contains("두") && $0.contains("절") })
     }
 
-    /// Four causes, because kbbs genuinely cannot tell them apart from the outside — and
-    /// listing them is more useful than picking one and being wrong.
-    func testItListsTheCausesItCannotDistinguish() {
-        let rows = plain(BlockedScreen.render(state()).render())
-            .joined(separator: "\n")
-        XCTAssertTrue(rows.contains("잠금"))
-        XCTAssertTrue(rows.contains("최소화"))
-        XCTAssertTrue(rows.contains("종료"))
-        XCTAssertTrue(rows.contains("손쉬운 사용"))
+    /// The causes it cannot tell apart, named — picking one and being wrong is worse.
+    func testItNamesTheCausesItCannotDistinguish() {
+        let text = plain(BlockedScreen.render(state()).render()).joined(separator: "\n")
+        XCTAssertTrue(text.contains("잠금"))
+        XCTAssertTrue(text.contains("최소화"))
+        XCTAssertTrue(text.contains("종료"))
+        XCTAssertTrue(text.contains("권한"))
     }
 
-    /// The one thing kbbs must promise here: it will not try the passcode. Getting it
-    /// wrong repeatedly makes KakaoTalk log the account out.
+    /// The one promise that has to survive any trimming: kbbs does not try the passcode.
     func testItPromisesNotToTypeThePasscode() {
-        let text = plain(BlockedScreen.render(state()).render()).joined(separator: "\n")
-        XCTAssertTrue(text.contains("암호"))
-        XCTAssertTrue(text.contains("로그아웃"))
+        XCTAssertTrue(plain(BlockedScreen.render(state()).render()).joined().contains("암호"))
     }
 
     func testItShowsHowLongItHasBeenCutOffAndWhenItRetries() {

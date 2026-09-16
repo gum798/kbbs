@@ -163,8 +163,6 @@ struct Kbbs: ParsableCommand {
             detail: String(format: "%.1f초", elapsed) + (source == .chatList ? "" : " · 열린 창만")
         )
 
-        ladder.blank()
-        ladder.note("잠금 화면은 건드리지 않습니다. 암호를 여러 번 틀리면 계정이 로그아웃됩니다.")
         ladder.connected()
 
         // Every Accessibility call from here on runs on the worker's queue. The main

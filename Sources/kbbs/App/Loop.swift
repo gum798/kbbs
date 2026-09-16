@@ -631,17 +631,12 @@ struct Loop {
         let title = waiting?.title ?? ""
         let lines = [
             "",
-            "  「\(Width.elide(title, to: 40))」 은(는) 카카오톡에 창이 열려 있지 않습니다.",
+            "  「\(Width.elide(title, to: 40))」 은(는) 카카오톡에 창이 없습니다.",
+            "  카카오톡에서 열면 바로 들어갑니다.",
             "",
-            "  kbbs 는 대신 열지 않습니다. 창을 여는 일은 카카오톡을 화면 앞으로",
-            "  끌어내는 일이고, 읽기만 하는 동안에는 그러지 않습니다.",
+            "  \(Theme.lineIndicator(Date())) \(waited)초",
             "",
-            "  카카오톡에서 이 대화방을 직접 열어 주세요.",
-            "  열리는 즉시 이 화면이 대화로 바뀝니다.",
-            "",
-            "  \(Theme.lineIndicator(Date())) 1초마다 확인 중 · \(waited)초 기다리는 중",
-            "",
-            "  Esc:목록으로  Q:종료",
+            "  Esc:목록  Q:종료",
         ]
         f.set(0, Frame.rule(left: "╔", fill: "═", right: "╗", width: 80))
         f.set(1, Frame.bordered("  창 없음", left: "║", right: "║", width: 80))

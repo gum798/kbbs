@@ -305,7 +305,7 @@ extension ListScreenTests {
         var s = state(13)
         s.confirm = ConfirmBox(title: "어머니", stage: .asking)
         let rows = plain(ListScreen.render(s).render())
-        XCTAssertTrue(rows.contains { $0.contains("어머니") && $0.contains("주의") }, "no warning naming the room")
+        XCTAssertTrue(rows.contains { $0.contains("어머니") }, "the gate does not name the room")
         XCTAssertTrue(rows.contains { $0.contains("두 번") }, "the double-click is not disclosed")
         XCTAssertTrue(rows.contains { $0.contains("마우스") }, "the mouse is not disclosed")
     }

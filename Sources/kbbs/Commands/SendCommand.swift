@@ -84,20 +84,14 @@ struct SendCommand: ParsableCommand {
         } catch {
             print("")
             print("보내지 않았습니다: \(error)")
-            print("이 실패들은 전부 누르기 전에 일어납니다. 메시지는 나가지 않았습니다.")
             throw ExitCode.failure
         }
 
-        print("")
         switch outcome {
         case .composerCleared:
-            print("눌렀고, 카카오톡이 입력창을 비웠습니다.")
+            print("보냈습니다.")
         case .stillHoldingText:
-            print("눌렀지만 입력창에 글자가 남아 있습니다.")
-            print("보내졌을 수도 있습니다 — 누르기는 실패를 반환하면서도 보내는 경우가 있습니다.")
-            print("다시 보내지 마세요. 카카오톡에서 직접 확인하세요.")
+            print("눌렀지만 입력창에 글자가 남아 있습니다. 다시 보내지 말고 카카오톡에서 확인하세요.")
         }
-        print("어느 쪽이든 '도착했다'는 증거는 아닙니다.")
-        print("확인하려면:  \(CommandLine.arguments.first.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "kbbs") --room \"\(room)\" --once")
     }
 }
