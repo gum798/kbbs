@@ -90,4 +90,17 @@ final class BlockedScreenTests: XCTestCase {
         for row in plain(BlockedScreen.render(state("전사를 읽지 못했습니다")).render()) { print(row) }
     }
 
+    /// It spelled KBBB for a while: the S was drawn as another B and nothing noticed,
+    /// because every letter was the right width and the frame still measured 80 cells.
+    ///
+    /// A B closes on the right in both of its narrow rows; an S closes on the left in one
+    /// and the right in the other. So those two rows are identical for KBBB and differ
+    /// for KBBS.
+    func testTheBannerSpellsTheProgramsName() {
+        let rows = plain(BlockedScreen.render(state()).render())
+        let upper = rows[5].suffix(60)
+        let lower = rows[7].suffix(60)
+        XCTAssertNotEqual(upper, lower, "the last letter is a B, not an S")
+    }
+
 }
