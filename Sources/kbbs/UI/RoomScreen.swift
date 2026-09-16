@@ -198,7 +198,7 @@ enum RoomScreen {
     }
 
     private static func hotkeyLine(_ state: RoomState) -> String {
-        let keys = "  Enter:전송  Esc:목록  R:새로고침  Q:종료"
+        let keys = "  Enter:전송  Esc:목록  R:새로고침  Q:종료 (입력창 비었을 때)"
         let clock = Theme.clock(state.clock) + "  "
         let gap = max(1, inner - Width.cells(keys) - Width.cells(clock))
         return keys + String(repeating: " ", count: gap) + clock

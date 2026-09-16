@@ -224,4 +224,11 @@ final class RoomScreenTests: XCTestCase {
         }
     }
 
+    /// R and Q are letters while something is being typed, so the row has to say when
+    /// they are keys and when they are text.
+    func testTheHotkeyRowSaysTheLettersOnlyWorkOnAnEmptyComposer() {
+        let rows = plain(RoomScreen.render(state([])).render())
+        XCTAssertTrue(rows[22].contains("입력창 비었을 때"), rows[22])
+    }
+
 }

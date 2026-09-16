@@ -292,17 +292,20 @@ struct Loop {
     }
 
     private mutating func handleList(_ key: Key) -> Outcome {
+        switch Hotkey.command(for: key) {
+        case .quit: return .quit
+        case .refresh: rescan(); return .carryOn
+        case .pagePrevious: list.pageBack(); return .carryOn
+        case .pageNext: list.pageForward(); return .carryOn
+        case .repaint: lastFrame = []; return .carryOn
+        case .yes, .none: break
+        }
+
         switch key {
-        case .char("q"), .char("Q"), .control("c"):
-            return .quit
-        case .up, .char("k"):
+        case .up, .char("K"):
             list.moveUp()
-        case .down, .char("j"):
+        case .down, .char("J"):
             list.moveDown()
-        case .pageUp, .char("p"), .char("P"):
-            list.pageBack()
-        case .pageDown, .char("n"), .char("N"):
-            list.pageForward()
         case .home:
             list.page = 0
             list.cursor = 0
@@ -311,10 +314,6 @@ struct Loop {
             list.page = list.pageCount - 1
             list.cursor = max(0, list.roomsOnPage - 1)
             list.clearNumberBuffer()
-        case .char("r"), .char("R"):
-            rescan()
-        case .control("l"):
-            lastFrame = []
         case .backspace:
             list.popDigit()
             bufferTouchedAt = list.numberBuffer.isEmpty ? nil : Date()
@@ -339,25 +338,26 @@ struct Loop {
         guard var room = roomState else { return .carryOn }
         let composerEmpty = room.composer.isEmpty
 
-        switch key {
-        case .control("c"):
+        switch Hotkey.command(for: key, composerEmpty: composerEmpty) {
+        case .quit:
             return .quit
-        // The guard has to be repeated: `where` binds only to the pattern it follows, so
-        // the single-clause form let a lowercase q quit mid-sentence and take the message
-        // with it.
-        case .char("q") where composerEmpty, .char("Q") where composerEmpty:
-            return .quit
-        case .escape:
-            leaveRoom()
-            return .carryOn
-        case .control("l"):
+        case .repaint:
             lastFrame = []
-        case .char("r") where composerEmpty, .char("R") where composerEmpty:
+            return .carryOn
+        case .refresh:
             if let token = roomToken {
                 room.note = "읽는 중…"
                 roomState = room
                 submit(.readRoom(token: token, title: room.title, limit: Self.roomReadLimit))
             }
+            return .carryOn
+        case .pagePrevious, .pageNext, .yes, .none:
+            break
+        }
+
+        switch key {
+        case .escape:
+            leaveRoom()
             return .carryOn
         case .backspace:
             if !room.composer.isEmpty { room.composer.removeLast() }
@@ -395,32 +395,31 @@ struct Loop {
 
         switch confirm.stage {
         case .asking:
-            switch key {
-            case .control("c"):
-                return .quit
-            case .char("y"), .char("Y"):
+            // N is "아니오" here, not "다음 쪽" — paging has no meaning over a modal.
+            switch Hotkey.command(for: key) {
+            case .quit: return .quit
+            case .yes:
                 list.confirm?.stage = .opening(step: 0)
                 submit(.openWindow(title: confirm.title))
-            case .char("n"), .char("N"), .escape:
+            case .pageNext:
                 dismissConfirm()
             default:
-                break
+                if case .escape = key { dismissConfirm() }
             }
         case .opening:
             // Keys are dead while KakaoTalk has the front and a click is in flight;
             // Ctrl-C still works because it arrives as a signal, not as a key.
             if case .control("c") = key { return .quit }
         case .failed:
-            switch key {
-            case .control("c"):
-                return .quit
-            case .char("r"), .char("R"):
+            switch Hotkey.command(for: key) {
+            case .quit: return .quit
+            case .refresh:
                 dismissConfirm()
                 rescan()
-            case .escape, .char("n"), .char("N"):
+            case .pageNext:
                 dismissConfirm()
             default:
-                break
+                if case .escape = key { dismissConfirm() }
             }
         }
         return .carryOn
@@ -433,37 +432,34 @@ struct Loop {
     }
 
     private mutating func handleBlocked(_ key: Key) -> Outcome {
-        switch key {
-        case .char("q"), .char("Q"), .control("c"):
+        switch Hotkey.command(for: key) {
+        case .quit:
             return .quit
-        case .char("r"), .char("R"):
+        case .refresh:
             if let token = roomToken, let title = roomState?.title, !axBusy {
                 submit(.readRoom(token: token, title: title, limit: Self.roomReadLimit))
             }
-        case .escape:
-            blocked = nil
-            readFailures = 0
-            leaveRoom()
-        case .control("l"):
+        case .repaint:
             lastFrame = []
         default:
-            break
+            if case .escape = key {
+                blocked = nil
+                readFailures = 0
+                leaveRoom()
+            }
         }
         return .carryOn
     }
 
     private mutating func handleWaiting(_ key: Key) -> Outcome {
+        if Hotkey.command(for: key) == .quit { return .quit }
         switch key {
-        case .char("q"), .char("Q"), .control("c"):
-            return .quit
         case .escape:
             waiting = nil
             screen = .list
             nextWindowWatch = nil
             nextListPoll = Date().addingTimeInterval(Self.listPoll)
             abandonInFlight()
-            lastFrame = []
-        case .control("l"):
             lastFrame = []
         default:
             break
