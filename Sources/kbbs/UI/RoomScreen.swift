@@ -15,6 +15,8 @@ struct RoomState {
     /// the screen states it rather than claiming a cadence it is not keeping.
     var pollSeconds: TimeInterval?
     var pending: [PendingLedger.Entry] = []
+    /// How many of the last messages arrived while this screen was open.
+    var newCount = 0
 
     init(title: String) {
         self.title = title
@@ -92,8 +94,9 @@ enum RoomScreen {
 
     private static func transcriptLines(_ state: RoomState) -> [String] {
         var lines: [String] = []
-        for message in state.messages {
-            lines.append(contentsOf: messageLines(message))
+        let firstNew = state.messages.count - min(state.newCount, state.messages.count)
+        for (index, message) in state.messages.enumerated() {
+            lines.append(contentsOf: messageLines(message, isNew: index >= firstNew && state.newCount > 0))
         }
         for entry in state.pending {
             lines.append(contentsOf: pendingLines(entry))
@@ -103,10 +106,12 @@ enum RoomScreen {
         return Array(lines.suffix(capacity))
     }
 
-    private static func messageLines(_ message: TranscriptMessage) -> [String] {
+    private static func messageLines(_ message: TranscriptMessage, isNew: Bool = false) -> [String] {
         let marker = attachmentMarker(message)
         let budget = marker.isEmpty ? Col.body : Col.body - Width.cells(marker) - 1
-        let wrapped = Width.wrap(message.body, to: max(1, budget))
+        let wrapped = message.body
+            .components(separatedBy: "\n")
+            .flatMap { Width.wrap($0, to: max(1, budget)) }
 
         var lines: [String] = []
         for (index, text) in wrapped.enumerated() {
@@ -114,7 +119,9 @@ enum RoomScreen {
             let content = isLast && !marker.isEmpty
                 ? Width.pad(text, to: budget) + " " + marker
                 : text
-            lines.append(index == 0 ? head(message) + bodyCell(content) : hang() + bodyCell(content))
+            lines.append(index == 0
+                ? head(message, isNew: isNew) + bodyCell(content)
+                : hang() + bodyCell(content))
         }
 
         return lines
@@ -135,8 +142,8 @@ enum RoomScreen {
         }
     }
 
-    private static func head(_ message: TranscriptMessage) -> String {
-        " " + Width.pad(ChatTextNormalizer.compactTime(message.timeRaw ?? ""), to: Col.time)
+    private static func head(_ message: TranscriptMessage, isNew: Bool) -> String {
+        (isNew ? "*" : " ") + Width.pad(ChatTextNormalizer.compactTime(message.timeRaw ?? ""), to: Col.time)
             + " " + Width.column(TranscriptAttribution.marker(for: message), to: Col.author)
             + " "
     }
@@ -163,10 +170,14 @@ enum RoomScreen {
     }
 
     /// What fits of the composer, from the end, so the caret is always on screen.
+    ///
+    /// Newlines are shown as ↵ rather than taken: the composer is one row, and a two-line
+    /// message that looks like one line is a message the user cannot check before sending.
     private static func visibleComposer(_ state: RoomState) -> String {
+        let shown = state.composer.replacingOccurrences(of: "\n", with: "↵")
         let budget = inner - Width.cells(prompt) - 1
-        guard Width.cells(state.composer) > budget else { return state.composer }
-        return String(Width.truncate(String(state.composer.reversed()), to: budget).reversed())
+        guard Width.cells(shown) > budget else { return shown }
+        return String(Width.truncate(String(shown.reversed()), to: budget).reversed())
     }
 
     /// The terminal's own cursor belongs here, because the input method draws what it is
@@ -188,7 +199,7 @@ enum RoomScreen {
         if let note = state.note, !note.isEmpty {
             left = "  " + Width.elide(note, to: inner - Width.cells(right) - 4)
         } else {
-            left = "  Enter:전송  Esc:목록  R:갱신  S:창보기  W:창닫기  Q:종료"
+            left = "  Enter:전송  ⌥Enter:줄바꿈  Esc:목록  S:창보기  W:창닫기  Q:종료"
         }
         let gap = max(1, inner - Width.cells(left) - Width.cells(right))
         return left + String(repeating: " ", count: gap) + right

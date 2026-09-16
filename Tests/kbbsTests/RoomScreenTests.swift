@@ -254,4 +254,65 @@ final class RoomScreenTests: XCTestCase {
         XCTAssertEqual(RoomScreen.caretRow, 21)
     }
 
+    // MARK: - Line breaks in the composer
+
+    /// The composer is one row, so a newline is shown rather than taken. Without a mark
+    /// a two-line message looks like one and the user cannot tell what they will send.
+    func testALineBreakIsVisibleInTheComposer() {
+        var s = state([])
+        s.composer = "첫줄\n둘째줄"
+        let rows = plain(RoomScreen.render(s).render())
+        XCTAssertTrue(rows[20].contains("첫줄↵둘째줄"), rows[20])
+    }
+
+    func testALineBreakKeepsTheFrame() {
+        var s = state([])
+        s.composer = "가나\n다라\n마바"
+        for (i, row) in plain(RoomScreen.render(s).render()).enumerated() {
+            XCTAssertEqual(Width.cells(row), 80, "row \(i)")
+        }
+    }
+
+    func testTheCaretCountsTheLineBreakMark() {
+        var s = state([])
+        s.composer = "가\n"
+        XCTAssertEqual(RoomScreen.caretColumn(s), 12)
+    }
+
+    /// A message that arrived with a newline in it wraps in the transcript rather than
+    /// showing the mark — there is room there.
+    func testATranscriptMessageWrapsAtItsLineBreak() {
+        let rows = plain(RoomScreen.render(state([
+            message("첫줄\n둘째줄", author: "김민수"),
+        ])).render())
+        XCTAssertTrue(rows.contains { $0.contains("첫줄") })
+        XCTAssertTrue(rows.contains { $0.contains("둘째줄") })
+        XCTAssertFalse(rows.contains { $0.contains("↵") })
+    }
+
+    // MARK: - New arrivals
+
+    /// A message that arrived while you were reading is marked at the edge of the row, so
+    /// a glance answers "did anything come in" without re-reading the whole panel.
+    func testNewMessagesAreMarked() {
+        var s = state([message("예전 것", author: "김민수"), message("새로 온 것", author: "김민수")])
+        s.newCount = 1
+        let rows = plain(RoomScreen.render(s).render())
+        XCTAssertTrue(rows.contains { $0.hasPrefix("║*") && $0.contains("새로 온 것") }, "\(rows)")
+        XCTAssertFalse(rows.contains { $0.hasPrefix("║*") && $0.contains("예전 것") }, "the old one is marked")
+    }
+
+    func testWithNothingNewNothingIsMarked() {
+        let rows = plain(RoomScreen.render(state([message("예전 것", author: "김민수")])).render())
+        XCTAssertFalse(rows.contains { $0.hasPrefix("║*") })
+    }
+
+    func testTheMarkerKeepsTheFrame() {
+        var s = state((1...6).map { message("메시지\($0)", author: "김민수") })
+        s.newCount = 3
+        for (i, row) in plain(RoomScreen.render(s).render()).enumerated() {
+            XCTAssertEqual(Width.cells(row), 80, "row \(i)")
+        }
+    }
+
 }

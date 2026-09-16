@@ -168,6 +168,11 @@ struct Loop {
                 screen = .room
                 lastFrame = []
             }
+            room.newCount = NewMessages.count(
+                previous: room.messages,
+                current: snapshot.messages,
+                carried: room.newCount
+            )
             room.messages = snapshot.messages
             ledger.reconcile(against: snapshot.messages)
             room.pending = ledger.entries
@@ -407,6 +412,10 @@ struct Loop {
                 roomState = room
                 submit(.send(token: token, body: body))
                 return .carryOn
+            }
+        case .lineBreak:
+            if room.composer.unicodeScalars.count < 300 {
+                room.composer.append("\n")
             }
         case .char(let c):
             if room.composer.unicodeScalars.count < 300 {

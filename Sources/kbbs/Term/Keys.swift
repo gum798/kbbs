@@ -5,7 +5,7 @@ enum Key: Equatable {
     case char(Character)
     case up, down, left, right
     case home, end, pageUp, pageDown
-    case enter, backspace, tab, escape
+    case enter, lineBreak, backspace, tab, escape
     case control(Character)
 }
 
@@ -63,6 +63,9 @@ struct KeyDecoder {
             switch byte {
             case 0x5B, 0x4F:            // CSI "[" and SS3 "O"
                 escape.append(byte)
+            case 0x0D, 0x0A:            // Option+Enter: a line break, not a send
+                escape.removeAll()
+                keys.append(.lineBreak)
             case 0x1B:                  // a second Esc: the first one was a key
                 keys.append(.escape)
             default:                    // Esc then something ordinary: both are keys
@@ -105,6 +108,8 @@ struct KeyDecoder {
         case 0x44: return .left
         case 0x48: return .home
         case 0x46: return .end
+        case 0x75:                      // CSI-u: "13;2u" is Shift+Enter
+            return parameters == [0x31, 0x33, 0x3B, 0x32] ? .lineBreak : nil
         case 0x7E:
             switch parameters {
             case [0x31], [0x37]: return .home        // 1~ and 7~
@@ -162,7 +167,8 @@ struct KeyDecoder {
 
     private static func controlKey(for byte: UInt8) -> Key? {
         switch byte {
-        case 0x0D, 0x0A: return .enter
+        case 0x0D: return .enter
+        case 0x0A: return .lineBreak    // Ctrl-J, the one line break every terminal sends
         case 0x7F, 0x08: return .backspace
         case 0x09: return .tab
         case 0x01...0x07, 0x0B...0x0C, 0x0E...0x1A:

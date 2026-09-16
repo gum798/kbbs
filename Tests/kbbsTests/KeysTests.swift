@@ -53,11 +53,6 @@ final class KeysTests: XCTestCase {
         XCTAssertEqual(d.feed([0x0D]), [.enter])
     }
 
-    func testLineFeedIsAlsoEnter() {
-        var d = KeyDecoder()
-        XCTAssertEqual(d.feed([0x0A]), [.enter])
-    }
-
     func testDeleteIsBackspace() {
         var d = KeyDecoder()
         XCTAssertEqual(d.feed([0x7F]), [.backspace])
@@ -192,6 +187,40 @@ final class KeysTests: XCTestCase {
         var d = KeyDecoder()
         _ = d.feed(bytes("a"))
         XCTAssertFalse(d.hasPendingEscape)
+    }
+
+    // MARK: - A line break that is not a send
+
+    /// Enter sends, so a newline needs its own key. Terminals do not distinguish
+    /// Shift+Enter from Enter — both arrive as CR — so the three spellings that DO come
+    /// through differently all mean the same thing here.
+    func testControlJIsALineBreak() {
+        var d = KeyDecoder()
+        XCTAssertEqual(d.feed([0x0A]), [.lineBreak])
+    }
+
+    /// Option+Enter, which sends Esc then CR on a Mac terminal with Option as Meta.
+    func testOptionEnterIsALineBreak() {
+        var d = KeyDecoder()
+        XCTAssertEqual(d.feed([0x1B, 0x0D]), [.lineBreak])
+    }
+
+    /// kitty and iTerm in CSI-u mode spell Shift+Enter out properly.
+    func testShiftEnterInCSIUIsALineBreak() {
+        var d = KeyDecoder()
+        XCTAssertEqual(d.feed(Array("\u{1B}[13;2u".utf8)), [.lineBreak])
+    }
+
+    func testPlainReturnIsStillASend() {
+        var d = KeyDecoder()
+        XCTAssertEqual(d.feed([0x0D]), [.enter])
+    }
+
+    /// An Esc that is not followed by CR is still an Esc.
+    func testOptionEnterDoesNotSwallowALoneEscape() {
+        var d = KeyDecoder()
+        XCTAssertEqual(d.feed([0x1B]), [])
+        XCTAssertEqual(d.flushPendingEscape(), [.escape])
     }
 
 }
