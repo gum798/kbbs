@@ -246,4 +246,54 @@ extension ListScreenTests {
         XCTAssertTrue(without.contains("Q:종료"))
     }
 
+    // MARK: - The selected row
+
+    /// The ▶ alone is one cell of signal in an 80-cell row, and on a screen of Korean
+    /// text it disappears. The row the cursor is on is drawn in reverse video so it reads
+    /// as a bar at a glance.
+    func testTheSelectedRowIsReversed() {
+        var s = state(5)
+        s.cursor = 2
+        let rows = ListScreen.render(s).render()
+        XCTAssertTrue(rows[5 + 2].contains(Theme.reverse), "no reverse on the cursor row")
+        XCTAssertTrue(rows[5 + 2].contains(Theme.reset), "the reverse is never turned off")
+    }
+
+    func testTheOtherRowsAreNotReversed() {
+        var s = state(5)
+        s.cursor = 2
+        let rows = ListScreen.render(s).render()
+        for (offset, row) in rows[5...(5 + 4)].enumerated() where offset != 2 {
+            XCTAssertFalse(row.contains(Theme.reverse), "row \(offset) should be plain")
+        }
+    }
+
+    /// The colour codes must not be counted as content, or the bar pushes the right
+    /// border off the screen.
+    func testAReversedRowIsStillEightyCells() {
+        var s = state(27)
+        s.cursor = 4
+        for (i, row) in ListScreen.render(s).render().enumerated() {
+            XCTAssertEqual(Width.cells(Frame.stripANSI(row)), 80, "row \(i)")
+        }
+    }
+
+    /// The bar covers the row, not the frame: the ║ borders stay in the normal colours
+    /// so the box does not break open on the selected line.
+    func testTheBordersStayOutsideTheBar() {
+        var s = state(5)
+        s.cursor = 0
+        let row = ListScreen.render(s).render()[5]
+        XCTAssertTrue(row.hasPrefix(Theme.v), "the left border is inside the bar")
+        XCTAssertTrue(row.hasSuffix(Theme.v), "the right border is inside the bar")
+    }
+
+    func testAReversedRowStillReadsAsItself() {
+        var s = state(3)
+        s.cursor = 1
+        let row = Frame.stripANSI(ListScreen.render(s).render()[6])
+        XCTAssertTrue(row.contains("방2"), row)
+        XCTAssertTrue(row.contains("▶"), row)
+    }
+
 }

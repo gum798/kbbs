@@ -59,11 +59,11 @@ enum ListScreen {
                 f.set(row, bordered(""))
                 continue
             }
-            f.set(row, bordered(roomLine(
-                visible[slot],
-                number: state.firstNumberOnPage + slot,
-                selected: slot == state.cursor
-            )))
+            let selected = slot == state.cursor
+            let line = roomLine(visible[slot], number: state.firstNumberOnPage + slot, selected: selected)
+            // Reverse the content, not the frame. The bar has to stop at the ║ or the box
+            // reads as broken open on whichever line the cursor is on.
+            f.set(row, bordered(selected ? Theme.reversed(Width.pad(line, to: inner)) : line))
         }
 
         f.set(18, Frame.rule(left: Theme.teeL, fill: Theme.h, right: Theme.teeR, width: width))
