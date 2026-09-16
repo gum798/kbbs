@@ -117,10 +117,6 @@ enum RoomScreen {
             lines.append(index == 0 ? head(message) + bodyCell(content) : hang() + bodyCell(content))
         }
 
-        // The guess, spelled out on its own line directly under what it applies to.
-        if TranscriptAttribution.label(for: message) == .probablyMe {
-            lines.append(hang() + bodyCell("↑ 화면 위치로만 추정한 발신자입니다"))
-        }
         return lines
     }
 

@@ -108,14 +108,14 @@ final class RoomScreenTests: XCTestCase {
         XCTAssertTrue(rows.contains { $0.contains("나") && $0.contains("응 괜찮아") })
     }
 
-    /// The geometry read came back unknown and the reader fell back to "mine". The
-    /// screen says so rather than telling the user they said something they did not.
-    func testAGuessedSenderIsMarkedAndExplained() {
+    /// The geometry read came back unknown and the reader fell back to "mine". The ? is
+    /// the whole disclosure — it used to also spend a transcript row spelling it out.
+    func testAGuessedSenderIsMarked() {
         let rows = plain(RoomScreen.render(state([
             message("넵", side: "unknown", source: "default-me"),
         ])).render())
         XCTAssertTrue(rows.contains { $0.contains("나?") }, "the guess is not marked")
-        XCTAssertTrue(rows.contains { $0.contains("↑") && $0.contains("추정") }, "the guess is not explained")
+        XCTAssertFalse(rows.contains { $0.contains("추정") }, "the explanation should be gone")
     }
 
     func testANamedSenderIsShownByName() {
