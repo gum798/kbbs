@@ -60,7 +60,13 @@ enum ListScreen {
                 continue
             }
             let selected = slot == state.cursor
-            let line = roomLine(visible[slot], number: state.firstNumberOnPage + slot, selected: selected)
+            let room = visible[slot]
+            var line = roomLine(room, number: state.firstNumberOnPage + slot, selected: selected)
+            // Bold for a room with something waiting. The cursor bar wins when both apply:
+            // reverse video over bold reads as neither.
+            if !selected, (room.unreadCount ?? 0) > 0 {
+                line = Theme.bold + Width.pad(line, to: inner) + Theme.reset
+            }
             // Reverse the content, not the frame. The bar has to stop at the ║ or the box
             // reads as broken open on whichever line the cursor is on.
             f.set(row, bordered(selected ? Theme.reversed(Width.pad(line, to: inner)) : line))

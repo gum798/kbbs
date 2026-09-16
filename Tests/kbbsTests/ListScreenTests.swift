@@ -385,4 +385,36 @@ extension ListScreenTests {
         }
     }
 
+    // MARK: - Rooms with something waiting
+
+    /// The 안읽 number is easy to miss in a column of Korean text. A room with unread
+    /// messages is drawn bold so the eye finds it without reading the digits.
+    func testARoomWithUnreadMessagesIsBold() {
+        var s = state(3)
+        s.cursor = 2
+        s.rooms[0] = Room(title: "김민수", lastMessage: "왔어", unreadCount: 2)
+        s.rooms[1] = Room(title: "이수진", lastMessage: "응")
+        let rows = ListScreen.render(s).render()
+        XCTAssertTrue(rows[5].contains(Theme.bold), "the unread room is not bold")
+        XCTAssertFalse(rows[6].contains(Theme.bold), "a read room should be plain")
+    }
+
+    func testBoldDoesNotDisturbTheFrame() {
+        var s = state(27)
+        for i in s.rooms.indices where i % 2 == 0 {
+            s.rooms[i] = Room(title: s.rooms[i].title, lastMessage: "왔어", unreadCount: i + 1)
+        }
+        for (i, row) in ListScreen.render(s).render().enumerated() {
+            XCTAssertEqual(Width.cells(Frame.stripANSI(row)), 80, "row \(i)")
+        }
+    }
+
+    /// The cursor bar wins: a row that is both selected and unread reads as selected.
+    func testTheCursorRowIsStillReversed() {
+        var s = state(3)
+        s.cursor = 0
+        s.rooms[0] = Room(title: "김민수", lastMessage: "왔어", unreadCount: 2)
+        XCTAssertTrue(ListScreen.render(s).render()[5].contains(Theme.reverse))
+    }
+
 }

@@ -97,7 +97,10 @@ enum RawMode {
 
         var raw = savedTermios
         raw.c_lflag &= ~tcflag_t(ECHO | ICANON | IEXTEN)
-        raw.c_iflag &= ~tcflag_t(IXON | ICRNL | BRKINT | INPCK | ISTRIP)
+        // ICRNL and INLCR both have to go: the first turns Return into a line feed, the
+        // second turns Ctrl-J's line feed into a Return. Either one makes the send key
+        // and the line-break key indistinguishable by the time they arrive.
+        raw.c_iflag &= ~tcflag_t(IXON | ICRNL | INLCR | IGNCR | BRKINT | INPCK | ISTRIP)
         raw.c_oflag &= ~tcflag_t(OPOST)
         // VMIN 0 / VTIME 0: read never blocks. poll(2) decides when there is input.
         raw.c_cc.16 = 0
