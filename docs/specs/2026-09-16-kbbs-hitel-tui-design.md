@@ -762,6 +762,32 @@ SIGNALS. SIGINT/SIGTERM/SIGHUP/SIGQUIT and SIGWINCH install handlers that write 
 리스트 폴링 12초 간격이 거의 포화라는 뜻이고, A3(따뜻한 읽기)와는 별개 수치다.
 방 개수에 비례하므로 `--limit` 이 곧 지연이다.
 
+### A1 실측 — 절반은 확인, 절반은 뒤집힘 (2026-09-16)
+
+`kbbs inspect --window 0 --depth 6 --show-actions` 로 창이 열린 대화방 하나를 읽었다.
+별도 probe 실행파일은 필요 없었다. 2분.
+
+- **입력창에 `AXConfirm` 은 없다.** `AXTextArea id=_NS:51` 의 액션은 `AXShowMenu`
+  하나뿐이고, 창 전체 트리에 `AXConfirm` 이 **0개**다. A1 의 좁은 질문은 최악 전제가
+  맞았다.
+- **그런데 아무도 안 찾아본 게 있었다 — 「전송」 버튼이다.**
+  `[role: AXButton, title: "전송", flags: disabled, actions: AXPress]`.
+  창의 최상위 자식이고, 입력창이 비어 있어서 지금 비활성이다.
+
+이게 참이면 §5 전송 상태기계에서 전역 HID Return, `activateForSend()`, 포커스 게이트,
+자판 잠금, `notFrontmost`·`wrongWindow` 실패 모드가 통째로 없어진다. 남는 것은
+precheck(입력창 비었고 안정) → `setAttribute` 주입 → 정확 일치 검증 → `AXPress` →
+**전사에서 다시 읽어서 확인**. 마지막 규칙은 그대로다. AXPress 의 성공 반환은 전송을
+증명하지 않는다.
+
+**아직 모르는 것 두 가지. 둘 다 실제 전송 없이는 답이 안 나온다.**
+
+1. `setAttribute(kAXValueAttribute, ...)` 로 글자를 넣었을 때 「전송」 버튼이
+   **활성화되는가.** 카카오톡이 자기 텍스트 변경 알림으로 버튼 상태를 굴린다면, AX 로
+   값만 꽂는 건 그 알림을 안 일으킬 수 있다. 이게 거짓이면 주입 자체를 다시 설계해야
+   한다.
+2. 카카오톡이 **최전면이 아닐 때** `AXPress` 가 실제로 메시지를 보내는가.
+
 ### 아직 미검증
 
 A1(AXConfirm)·A2(가려진 창)·A3(따뜻한 읽기 지연) 셋 다 그대로. M1 실물 검증이
