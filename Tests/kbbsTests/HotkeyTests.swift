@@ -13,10 +13,11 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(Hotkey.command(for: .char("P")), .pagePrevious)
         XCTAssertEqual(Hotkey.command(for: .char("N")), .pageNext)
         XCTAssertEqual(Hotkey.command(for: .char("W")), .closeWindow)
+        XCTAssertEqual(Hotkey.command(for: .char("S")), .showWindow)
     }
 
     func testLowercaseLettersAreNotHotkeys() {
-        for letter in "qrpnkjw" {
+        for letter in "qrpnkjws" {
             XCTAssertNil(Hotkey.command(for: .char(letter)), "\(letter) should be text")
         }
     }

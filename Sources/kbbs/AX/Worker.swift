@@ -15,6 +15,7 @@ enum AXJob: Sendable {
     case openWindow(title: String)
     case send(token: Int, body: String)
     case closeWindow(title: String)
+    case showWindow(title: String)
 }
 
 /// A finished job, reduced to things that are safe to hand to the main thread.
@@ -219,6 +220,7 @@ final class AXWorker: @unchecked Sendable {
         case .openWindow: return "창 열기"
         case .send: return "전송"
         case .closeWindow: return "창 닫기"
+        case .showWindow: return "창 보이기"
         }
     }
 
@@ -299,6 +301,12 @@ final class AXWorker: @unchecked Sendable {
                 return .sendRefused(body: body, reason: "\(error)")
             }
 
+        case .showWindow(let title):
+            if let window = kakao.windows.first(where: { $0.role == kAXWindowRole && $0.title == title }) {
+                try? window.setAttribute(kAXMinimizedAttribute, value: false as CFBoolean)
+            }
+            return .closed(title: title, reason: nil)
+
         case .closeWindow(let title):
             do {
                 try WindowCloser(kakao: kakao).close(title: title)
@@ -318,8 +326,14 @@ final class AXWorker: @unchecked Sendable {
     /// Four steps, each reported so a click that never lands is visible as the step it
     /// stopped on. The terminal gets the front back at the end whatever happened.
     private func openWindow(titled title: String) -> AXResult {
+        // A row can go missing because the list scrolled, was re-scanned, or was never
+        // handed over. Re-scanning is cheap next to failing in front of the user.
+        if rows[title] == nil, let listWindow {
+            let found = scanner.scan(in: listWindow, limit: 60, trace: nil)
+            rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
+        }
         guard let row = rows[title] else {
-            return .openFailed(title: title, reason: "목록에서 그 행을 잃어버렸습니다")
+            return .openFailed(title: title, reason: "목록에서 그 행을 찾지 못했습니다")
         }
 
         let terminal = SystemFocusProbe.frontmostPID()
@@ -362,6 +376,11 @@ final class AXWorker: @unchecked Sendable {
         let deadline = Date().addingTimeInterval(2.5)
         while Date() < deadline {
             if let opened = try? reader.open(title: title) {
+                // Measured: a minimized window still reads, and still takes an injected
+                // composer value with the 전송 button enabling. So the window kbbs had to
+                // bring up gets put away again immediately instead of piling onto the
+                // screen for the rest of the session.
+                try? opened.window.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
                 let token = nextToken
                 nextToken += 1
                 contexts[token] = opened
@@ -380,6 +399,15 @@ final class AXWorker: @unchecked Sendable {
     /// Rows from the last scan, by title, so an open does not have to hunt for a row the
     /// scanner already found. Worker-side only, like every other live handle.
     private var rows: [String: UIElement] = [:]
+
+    /// Take over the row handles from the scan that ran during the boot ladder, before
+    /// this worker existed. Without them the first window-open of a session has nothing
+    /// to click and fails every time.
+    func adoptRows(_ items: [ChatListSnapshotItem]) {
+        queue.sync {
+            rows = Dictionary(items.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
+        }
+    }
 
     /// Take over a context that was resolved before the worker existed — the `--room`
     /// path opens one during the boot ladder so it can report what it cost.

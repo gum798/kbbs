@@ -120,9 +120,11 @@ struct Kbbs: ParsableCommand {
         let started = Date()
         var rooms: [Room] = []
         var source: ListSource = .chatList
+        var scanned: [ChatListSnapshotItem] = []
 
         if let listWindow {
             let items = ChatListScanner().scan(in: listWindow, limit: limit, trace: tracer)
+            scanned = items
             let openTitles = Set(app.windows.compactMap { $0.title })
             rooms = items.map { item in
                 Room(
@@ -169,6 +171,7 @@ struct Kbbs: ParsableCommand {
         // Every Accessibility call from here on runs on the worker's queue. The main
         // thread has made its last one.
         let worker = AXWorker(kakao: app, listWindow: listWindow, trace: trace)
+        worker.adoptRows(scanned)
         run(rooms: rooms, worker: worker, source: source)
     }
 

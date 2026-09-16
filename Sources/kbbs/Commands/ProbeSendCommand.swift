@@ -23,6 +23,9 @@ struct ProbeSendCommand: ParsableCommand {
     @Argument(help: "창이 열려 있는 대화방 이름")
     var room: String
 
+    @Flag(name: .long, help: "창을 최소화한 뒤에도 읽히는지 본다 (원래 상태로 되돌린다)")
+    var minimized = false
+
     @Flag(name: .long, help: "접근성 호출을 표준오류로 남긴다")
     var trace = false
 
@@ -47,6 +50,11 @@ struct ProbeSendCommand: ParsableCommand {
             print("입력창을 찾지 못했습니다.")
             throw ExitCode.failure
         }
+        if minimized {
+            try probeMinimized(kakao: kakao, window: window, runner: runner)
+            return
+        }
+
         let composer = context.inputElement
 
         // Never write over something the user is in the middle of typing.
@@ -104,6 +112,50 @@ struct ProbeSendCommand: ParsableCommand {
         default:
             print("A1 답: 판정 불가 — 버튼을 못 찾았거나 활성 상태를 못 읽었습니다.")
         }
+    }
+
+    /// Can a minimized window still be read? The design assumed not and built a whole
+    /// consent gate around opening windows; nobody had checked.
+    private func probeMinimized(kakao: KakaoTalkApp, window: UIElement, runner: AXActionRunner) throws {
+        let reader = KakaoTalkTranscriptReader(kakao: kakao, runner: runner, interactionMode: .backgroundSafe)
+        let before = (try? reader.readSnapshot(from: window, fallbackChatTitle: room, limit: 10).count) ?? 0
+        print("최소화 전  \(before)개 읽음")
+
+        let wasMinimized: Bool = window.attributeOptional(kAXMinimizedAttribute) ?? false
+        try window.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
+        Thread.sleep(forTimeInterval: 1.0)
+
+        let after = (try? reader.readSnapshot(from: window, fallbackChatTitle: room, limit: 10).count) ?? 0
+        print("최소화 후  \(after)개 읽음")
+
+        // Reading is only half of it: auto-minimising would break sending if the composer
+        // stops accepting a value, or the button stops enabling, while hidden.
+        let resolver = MessageContextResolver(kakao: kakao, runner: runner, interactionMode: .backgroundSafe)
+        if let context = resolver.resolve(in: window) {
+            let composer = context.inputElement
+            let existing = composer.stringValue ?? ""
+            if existing.isEmpty {
+                try? composer.setAttribute(kAXValueAttribute, value: Self.probeText as CFString)
+                Thread.sleep(forTimeInterval: 0.25)
+                let reflected = (composer.stringValue ?? "") == Self.probeText
+                let enabled = sendButton(in: window)?.isEnabled
+                _ = try? composer.setAttribute(kAXValueAttribute, value: "" as CFString)
+                print("최소화 상태 주입  \(reflected ? "반영됨" : "반영 안 됨") · 전송버튼 \(describe(enabled))")
+            } else {
+                print("최소화 상태 주입  건너뜀 (입력창에 글자가 있음)")
+            }
+        } else {
+            print("최소화 상태 주입  입력창을 찾지 못함")
+        }
+
+        if !wasMinimized {
+            try? window.setAttribute(kAXMinimizedAttribute, value: false as CFBoolean)
+            print("원래대로 되돌렸습니다.")
+        }
+        print("")
+        print(after > 0
+            ? "A2 답: 최소화된 창도 읽힙니다. 창을 숨긴 채로 쓸 수 있습니다."
+            : "A2 답: 최소화하면 읽히지 않습니다. 창이 보여야 합니다.")
     }
 
     /// The send button, by its label. Bounded: an unbudgeted walk of this tree does not

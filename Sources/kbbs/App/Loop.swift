@@ -209,6 +209,8 @@ struct Loop {
         case .closed(let title, let reason):
             if let reason {
                 say("「\(title)」 창을 닫지 못했습니다: \(reason)")
+            } else if screen == .room {
+                break
             } else {
                 list.rooms = list.rooms.map {
                     $0.title == title ? Room(title: $0.title, lastMessage: $0.lastMessage, timeLabel: $0.timeLabel, unreadCount: $0.unreadCount, hasWindow: false) : $0
@@ -313,6 +315,11 @@ struct Loop {
                 submit(.closeWindow(title: list.rooms[index].title))
             }
             return .carryOn
+        case .showWindow:
+            if let index = list.selectedRoomIndex, list.rooms[index].hasWindow {
+                submit(.showWindow(title: list.rooms[index].title))
+            }
+            return .carryOn
         case .pagePrevious: list.pageBack(); return .carryOn
         case .pageNext: list.pageForward(); return .carryOn
         case .repaint: lastFrame = []; return .carryOn
@@ -366,6 +373,12 @@ struct Loop {
             if let title = roomState?.title {
                 submit(.closeWindow(title: title))
                 leaveRoom()
+            }
+            return .carryOn
+        case .showWindow:
+            if let title = roomState?.title {
+                submit(.showWindow(title: title))
+                say("카카오톡에서 창을 띄웠습니다")
             }
             return .carryOn
         case .refresh:
