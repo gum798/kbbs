@@ -19,6 +19,9 @@ struct OpenCommand: ParsableCommand {
     @Flag(name: .long, help: "누르지 않고, 어디까지 되는지만 본다")
     var dryRun = false
 
+    @Flag(name: .long, help: "워커 스레드에서 실행해 TUI 와 같은 조건으로 만든다")
+    var offMain = false
+
     @Flag(name: .long, help: "접근성 호출을 표준오류로 남긴다")
     var trace = false
 
@@ -67,11 +70,23 @@ struct OpenCommand: ParsableCommand {
         let terminal = SystemFocusProbe.frontmostPID()
         defer { if let terminal { SystemFocusProbe.activate(pid: terminal) } }
 
-        kakao.activateForSend()
-        let front = KakaoTalkApp.runningApplication.map {
-            SystemFocusProbe.waitForFrontmost(pid: $0.processIdentifier, timeout: 1.5)
-        } ?? false
-        print("전면 전환      \(front ? "확인" : "실패")")
+        print("전환 전 최전면 pid=\(terminal.map(String.init) ?? "모름")")
+        let front: Bool
+        if offMain {
+            let queue = DispatchQueue(label: "kbbs.probe")
+            front = queue.sync {
+                kakao.activateForSend()
+                return KakaoTalkApp.runningApplication.map {
+                    SystemFocusProbe.waitForFrontmost(pid: $0.processIdentifier, timeout: 1.5)
+                } ?? false
+            }
+        } else {
+            kakao.activateForSend()
+            front = KakaoTalkApp.runningApplication.map {
+                SystemFocusProbe.waitForFrontmost(pid: $0.processIdentifier, timeout: 1.5)
+            } ?? false
+        }
+        print("전면 전환      \(front ? "확인" : "실패") (스레드 \(offMain ? "워커" : "메인"), 지금 최전면 pid=\(SystemFocusProbe.frontmostPID().map(String.init) ?? "모름"), 카톡 pid=\(KakaoTalkApp.runningApplication?.processIdentifier.description ?? "?"))")
         guard front else { throw ExitCode.failure }
 
         // Bringing the app forward brings ALL its windows, and a chat window sitting over

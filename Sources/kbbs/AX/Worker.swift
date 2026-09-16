@@ -359,13 +359,13 @@ final class AXWorker: @unchecked Sendable {
         // 1. Front. KakaoTalk has to be frontmost for a click to reach it.
         mailbox.deliver(.openingStep(title: title, step: 1), generation: currentGeneration)
         kakao.activateForSend()
-        guard let kakaoPID = KakaoTalkApp.runningApplication?.processIdentifier,
-              SystemFocusProbe.waitForFrontmost(pid: kakaoPID, timeout: 1.5)
-        else {
-            log("실패: 전면 전환 안 됨")
-            return .openFailed(title: title, reason: "카카오톡이 앞으로 나오지 않았습니다")
-        }
-        log("전면 전환 확인")
+        let kakaoPID = KakaoTalkApp.runningApplication?.processIdentifier
+        let front = kakaoPID.map { SystemFocusProbe.waitForFrontmost(pid: $0, timeout: 1.5) } ?? false
+        // Not a gate. Being frontmost is a means, not the goal, and this check has failed
+        // on a KakaoTalk that then opened the room perfectly well. What actually protects
+        // the click is that its coordinates are inside KakaoTalk's own list window, which
+        // is checked below, after the window is raised.
+        log("전면 전환 \(front ? "확인" : "안 됨") 최전면=\(SystemFocusProbe.frontmostPID().map(String.init) ?? "모름") 카톡=\(kakaoPID.map(String.init) ?? "?")")
 
         // 2. Raise the list, then take coordinates. Bringing the app forward brings ALL
         //    its windows, so a chat window sitting over the list takes the double-click
@@ -390,8 +390,8 @@ final class AXWorker: @unchecked Sendable {
             visibleScreens: OpenCommand.screensInEventSpace(),
             within: listWindow?.frame
         ) else {
-            log("실패: 좌표 거부 frame=\(row.frame.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "없음")")
-            return .openFailed(title: title, reason: "행이 화면 밖이거나 가려져 있습니다")
+            log("실패: 좌표 거부 frame=\(row.frame.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "없음") 창=\(listWindow?.frame.map { "\(Int($0.minY))~\(Int($0.maxY))" } ?? "없음")")
+            return .openFailed(title: title, reason: "목록에서 그 줄이 보이지 않습니다")
         }
         log("누를 좌표 (\(Int(point.x)),\(Int(point.y)))")
 
