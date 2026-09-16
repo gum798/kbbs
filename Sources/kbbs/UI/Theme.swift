@@ -43,6 +43,15 @@ enum Theme {
         )
     }
 
+    /// `●○○` cycling at roughly 3Hz off the main loop's clock.
+    ///
+    /// Not decoration. It is the only thing on screen that proves the process is alive
+    /// while an Accessibility call nobody can cancel has the work blocked.
+    static func lineIndicator(_ date: Date) -> String {
+        let phase = Int(date.timeIntervalSince1970 * 3) % 3
+        return (0..<3).map { $0 == phase ? "●" : "○" }.joined()
+    }
+
     static func clock(_ date: Date, calendar: Calendar = .current) -> String {
         let c = calendar.dateComponents([.hour, .minute, .second], from: date)
         return String(format: "%02d:%02d:%02d", c.hour ?? 0, c.minute ?? 0, c.second ?? 0)

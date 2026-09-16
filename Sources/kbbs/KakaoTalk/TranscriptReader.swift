@@ -117,7 +117,9 @@ struct KakaoTalkTranscriptReader {
     init(
         kakao: KakaoTalkApp,
         runner: AXActionRunner,
-        interactionMode: ChatWindowInteractionMode = .allowUIAutomation
+        // Quiet by default. A read that brings KakaoTalk to the front is indistinguishable
+        // from a send, and 'quiet' must not be a flag someone can forget to pass.
+        interactionMode: ChatWindowInteractionMode = .backgroundSafe
     ) {
         self.kakao = kakao
         self.runner = runner

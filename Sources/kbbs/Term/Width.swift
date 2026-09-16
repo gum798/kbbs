@@ -33,7 +33,7 @@ struct Width {
     /// scalars would be wrong for emoji ZWJ sequences, where several wide scalars join
     /// into one glyph; taking the first non-zero-width one gives 1 for "e" + combining
     /// acute and 2 for a joined emoji family.
-    private func width(ofCluster cluster: Character) -> Int {
+    fileprivate func width(ofCluster cluster: Character) -> Int {
         // U+FE0F asks for the emoji rendering of a character that is otherwise text —
         // "\u{2764}\u{FE0F}" is drawn two cells wide where "\u{2764}" alone is one.
         if cluster.unicodeScalars.contains(where: { $0.value == 0xFE0F }) {
@@ -120,6 +120,60 @@ struct Width {
     /// Elide, then pad to exactly `limit` cells. The common case for a table column.
     static func column(_ text: String, to limit: Int) -> String {
         shared.pad(shared.elide(text, to: limit), to: limit)
+    }
+
+    // MARK: - Wrapping
+
+    /// Break `text` into lines of at most `limit` cells.
+    ///
+    /// Korean has no spaces to break on inside a run of Hangul, so a wrapper that
+    /// insists on word boundaries would overflow on every Korean message. This one
+    /// breaks at a space when there is a usable one and anywhere otherwise — which is
+    /// what Korean readers expect and what Latin readers only notice when a word is
+    /// longer than the whole column.
+    static func wrap(_ text: String, to limit: Int) -> [String] {
+        guard limit > 0 else { return [text] }
+        let flattened = oneLine(text)
+        guard !flattened.isEmpty else { return [""] }
+        guard cells(flattened) > limit else { return [flattened] }
+
+        var lines: [String] = []
+        var line = ""
+        var used = 0
+        /// Where the last space in the current line is, so a Latin run can back up to it.
+        var lastSpace: (index: String.Index, used: Int)?
+
+        for character in flattened {
+            let w = shared.width(ofCluster: character)
+
+            if used + w > limit {
+                if let space = lastSpace, space.used > 0 {
+                    // Back up to the space: it ends this line and starts no new one.
+                    let head = String(line[line.startIndex..<space.index])
+                    let tail = String(line[line.index(after: space.index)...])
+                    lines.append(head)
+                    line = tail
+                    used = cells(tail)
+                } else {
+                    lines.append(line)
+                    line = ""
+                    used = 0
+                }
+                lastSpace = nil
+            }
+
+            if character == " " && line.isEmpty {
+                continue                        // no line begins with the space it broke on
+            }
+            if character == " " {
+                lastSpace = (line.endIndex, used)
+            }
+            line.append(character)
+            used += w
+        }
+
+        if !line.isEmpty { lines.append(line) }
+        return lines.isEmpty ? [""] : lines
     }
 
     // MARK: - Control characters

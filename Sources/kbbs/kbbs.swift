@@ -48,6 +48,9 @@ struct Kbbs: ParsableCommand {
     @Flag(name: .long, help: "대화형 화면 대신 한 장만 찍고 끝낸다 (파이프로 넘길 때)")
     var once = false
 
+    @Option(name: .long, help: "목록 대신 이 대화방을 연다 (카카오톡에 창이 이미 열려 있어야 한다)")
+    var room: String?
+
     func run() throws {
         Paths.ensureDirectory()
         TTYOut.capture()
@@ -79,6 +82,13 @@ struct Kbbs: ParsableCommand {
         // Binds to KakaoTalk where it sits. It cannot start it — the initializer has no
         // way to, by construction, because starting it would bring it to the front.
         let app = try KakaoTalkApp()
+
+        // Before the chat-list window is required: opening one conversation does not
+        // need the list, and the list window is often the one that is closed.
+        if let room {
+            try openRoom(room, kakao: app, ladder: ladder)
+            return
+        }
 
         guard let listWindow = app.chatListWindow else {
             ladder.step("대화목록 창", "없음")
@@ -152,21 +162,61 @@ struct Kbbs: ParsableCommand {
         run(rooms: rooms, rescan: rescan)
     }
 
-    /// One frame to stdout, or the whole terminal, depending on `--once`.
-    private func run(rooms: [Room], rescan: @escaping () -> [Room]?) {
+    /// Straight into one conversation, skipping the list.
+    ///
+    /// The room has to already have a KakaoTalk window: kbbs does not open one here,
+    /// because opening brings KakaoTalk to the front and that is never a side effect of
+    /// asking to read.
+    private func openRoom(_ title: String, kakao: KakaoTalkApp, ladder: BootLadder) throws {
+        let reader = RoomReader(kakao: kakao, trace: trace)
+        let opened: RoomReader.Opened
+        do {
+            opened = try reader.open(title: title)
+        } catch RoomReader.OpenFailure.noWindow(let candidates) {
+            ladder.failed("「\(title)」 창이 열려 있지 않습니다.")
+            print("  지금 열려 있는 창: " + (candidates.isEmpty ? "(없음)" : candidates.map { "「\($0)」" }.joined(separator: " ")))
+            print("")
+            throw ExitCode.failure
+        } catch {
+            ladder.failed("「\(title)」 창은 찾았지만 입력창과 대화 영역을 찾지 못했습니다.")
+            print("  어디서 끊겼는지 보려면:  \(Kbbs.commandName) --room \"\(title)\" --once --trace")
+            print("")
+            throw ExitCode.failure
+        }
+        ladder.step("대화방 열기", "확인", detail: String(format: "%.2f초", opened.elapsed))
+
+        guard let read = reader.read(opened, title: title, limit: limit) else {
+            ladder.failed("전사를 읽지 못했습니다.")
+            throw ExitCode.failure
+        }
+        ladder.step("대화 읽기", "\(read.snapshot.count)개", detail: String(format: "%.2f초", read.elapsed))
+
+        var state = RoomState(title: title)
+        state.messages = read.snapshot.messages
+        state.matchedWindowTitle = opened.matchedTitle
+        state.clock = Date()
+        state.note = String(format: "읽기 %.1f초 · 창 열기 %.1f초", read.elapsed, opened.elapsed)
+        state.pollSeconds = max(3, read.elapsed * 3)
+
         if once {
-            var state = ListState()
-            state.rooms = rooms
-            state.link = .live(lastRefresh: Date())
-            state.clock = Date()
-            for row in ListScreen.render(state).render() {
+            for row in RoomScreen.render(state).render() {
                 print(row)
             }
             return
         }
 
-        // From here on stdout and stderr belong to the log file. Anything that prints —
-        // a Swift runtime warning, the AX tracer — would otherwise land mid-frame.
+        enterTerminal { loop in
+            loop.enter(room: state, opened: opened)
+        } build: {
+            Loop(rooms: [], link: .live(lastRefresh: Date()), reader: reader, readLimit: limit) { nil }
+        }
+    }
+
+    /// Takes over the terminal, runs the loop, and always gives the terminal back.
+    private func enterTerminal(
+        prepare: (inout Loop) -> Void = { _ in },
+        build: () -> Loop
+    ) {
         TTYOut.redirect()
         RawMode.installSignalHandlers()
         guard RawMode.enter() else {
@@ -186,8 +236,33 @@ struct Kbbs: ParsableCommand {
         Width.adoptAmbiguousWide(probe.isWide)
         TTYOut.log("width probe: \(probe.describedInKorean)")
 
-        var loop = Loop(rooms: rooms, link: .live(lastRefresh: Date()), refresh: rescan)
+        var loop = build()
+        prepare(&loop)
         loop.run()
+    }
+
+    /// One frame to stdout, or the whole terminal, depending on `--once`.
+    private func run(rooms: [Room], rescan: @escaping () -> [Room]?) {
+        if once {
+            var state = ListState()
+            state.rooms = rooms
+            state.link = .live(lastRefresh: Date())
+            state.clock = Date()
+            for row in ListScreen.render(state).render() {
+                print(row)
+            }
+            return
+        }
+
+        enterTerminal {
+            Loop(
+                rooms: rooms,
+                link: .live(lastRefresh: Date()),
+                reader: demo ? nil : try? RoomReader(kakao: KakaoTalkApp(), trace: trace),
+                readLimit: limit,
+                refresh: rescan
+            )
+        }
     }
 
     /// Whether KakaoTalk has a window open for this room.
