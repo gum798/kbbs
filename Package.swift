@@ -31,5 +31,9 @@ let package = Package(
                 .plugin(name: "VersionGenPlugin"),
             ]
         ),
+        .testTarget(
+            name: "kbbsTests",
+            dependencies: ["kbbs"]
+        ),
     ]
 )
