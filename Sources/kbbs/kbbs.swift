@@ -33,6 +33,7 @@ struct Kbbs: ParsableCommand {
         version: BuildVersion.current,
         subcommands: [
             InspectCommand.self,
+            ProbeSendCommand.self,
         ]
     )
 
