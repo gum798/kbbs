@@ -1,10 +1,37 @@
 # kbbs convenience targets.
-# Building still uses `swift build` directly (see CLAUDE.md); these wrap the
-# Headatever version bump script (head.yymmdd.patch). See VERSIONING.md.
+#
+# Develop against ~/bin/kbbs, NOT .build/debug/kbbs. macOS keys Accessibility trust
+# per binary, and `swift build` rewrites the binary on every change — so a moving path
+# with a changing signature means re-granting permission in System Settings on every
+# rebuild. A stable path plus a stable ad-hoc identity keeps the grant alive.
 
+BIN := $(HOME)/bin/kbbs
 BUMP := scripts/headatever.sh
 
-.PHONY: version release release-major release-push
+.PHONY: build test install lint-print version release release-major release-push
+
+build: ## Debug build
+	@swift build
+
+test: ## Unit tests — no KakaoTalk, no Accessibility grant needed
+	@swift test
+
+install: ## Release build to ~/bin/kbbs with a stable ad-hoc signature
+	@swift build -c release
+	@mkdir -p $(HOME)/bin
+	@install -m 0755 .build/release/kbbs $(BIN)
+	@codesign -s - --identifier dev.kbbs --force $(BIN)
+	@echo "installed $(BIN)"
+
+lint-print: ## Fail if a deleted hazard is reintroduced
+	@! grep -rn --include='*.swift' \
+		-e 'keyboardSetUnicodeString' \
+		-e 'pressCommandW' \
+		-e 'forceTypeIntoChatWindow' \
+		-e 'NSWorkspace.shared.frontmostApplication' \
+		Sources/ \
+		|| (echo "^^ a hazard deleted on purpose has come back"; exit 1)
+	@echo "lint-print: clean"
 
 version: ## Print the current version
 	@$(BUMP) show
@@ -15,5 +42,5 @@ release: ## Patch release: bump VERSION, commit, tag v<version>
 release-major: ## Head release: head+1, date=today, patch=0
 	@$(BUMP) major
 
-release-push: ## Patch release, then push commit + tag (triggers release workflow)
+release-push: ## Patch release, then push commit + tag
 	@$(BUMP) patch --push

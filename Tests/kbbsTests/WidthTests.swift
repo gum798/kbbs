@@ -153,3 +153,35 @@ final class WidthTests: XCTestCase {
         XCTAssertEqual(Width.cells(out), 5)
     }
 }
+
+extension WidthTests {
+    // MARK: - Eliding, so a cut name reads as cut rather than as a different name
+
+    func testElideLeavesShortTextAlone() {
+        XCTAssertEqual(Width.elide("김민수", to: 10), "김민수")
+    }
+
+    func testElideLeavesExactlyFittingTextAlone() {
+        XCTAssertEqual(Width.elide("김민수", to: 6), "김민수")
+    }
+
+    func testElideMarksTruncatedText() {
+        let out = Width.elide("고등학교 3학년 2반 동창회", to: 18)
+        XCTAssertTrue(out.hasSuffix("…"))
+        XCTAssertLessThanOrEqual(Width.cells(out), 18)
+    }
+
+    func testElideNeverExceedsTheLimit() {
+        for limit in 1...30 {
+            XCTAssertLessThanOrEqual(Width.cells(Width.elide("가나다라마바사아자차", to: limit)), limit)
+        }
+    }
+
+    func testElideToZeroIsEmpty() {
+        XCTAssertEqual(Width.elide("김민수", to: 0), "")
+    }
+
+    func testElideIntoASingleCellIsJustTheMarker() {
+        XCTAssertEqual(Width.elide("김민수", to: 1), "…")
+    }
+}

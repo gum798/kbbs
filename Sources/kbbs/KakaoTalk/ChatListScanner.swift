@@ -41,6 +41,19 @@ enum ChatTextNormalizer {
         return false
     }
 
+    /// The unread badge as a number, or nil if this text is not a badge.
+    ///
+    /// KakaoTalk caps the badge at "999+", where the true count is unknowable, so the
+    /// floor is the honest reading. A room with nothing unread has no badge at all,
+    /// so a literal "0" is something else and is rejected.
+    static func unreadCount(from value: String) -> Int? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isUnreadCountLike(trimmed) else { return nil }
+        let digits = trimmed.filter(\.isNumber)
+        guard !digits.isEmpty, let count = Int(digits), count > 0 else { return nil }
+        return count
+    }
+
     static func isUnreadCountLike(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
@@ -52,6 +65,13 @@ struct ChatListDiscovery {
     let title: String
     let lastMessage: String?
     let listIndex: Int
+
+    /// Both are read from nodes the row scan already visits and the title/preview
+    /// filters already reject — the badge node carries identifier "Count Label", and
+    /// the timestamp is whatever ChatTextNormalizer.isTimeLikeValue accepts. Surfacing
+    /// them costs no extra traversal. nil means the row did not expose one.
+    var unreadCount: Int? = nil
+    var timeLabel: String? = nil
 }
 
 struct ChatListEntry: Codable, Equatable {
@@ -90,7 +110,13 @@ struct ChatListScanner {
         for (index, row) in rows.enumerated() {
             let title = extractTitle(from: row, trace: trace)
             let preview = extractPreview(from: row, title: title, trace: trace)
-            let discovery = ChatListDiscovery(title: title, lastMessage: preview, listIndex: index)
+            let discovery = ChatListDiscovery(
+                title: title,
+                lastMessage: preview,
+                listIndex: index,
+                unreadCount: extractUnreadCount(from: row),
+                timeLabel: extractTimeLabel(from: row)
+            )
             snapshots.append(ChatListSnapshotItem(element: row, discovery: discovery))
         }
 
@@ -197,6 +223,40 @@ struct ChatListScanner {
             return (textNode, text)
         }
 
+        return nil
+    }
+
+    /// The badge. KakaoTalk marks it with identifier "Count Label", which titleText and
+    /// previewText both reject explicitly — so the node is already being looked at.
+    private func extractUnreadCount(from row: UIElement) -> Int? {
+        let nodes = row.findAll(role: kAXStaticTextRole, limit: 16, maxNodes: 100)
+        for node in nodes where node.identifier == "Count Label" {
+            let text = normalizedText(node.stringValue) ?? normalizedText(node.title)
+            if let text, let count = ChatTextNormalizer.unreadCount(from: text) {
+                return count
+            }
+        }
+        // Some rows expose the badge without the identifier; fall back to shape.
+        for node in nodes {
+            guard node.identifier != "Count Label" else { continue }
+            guard let text = normalizedText(node.stringValue) ?? normalizedText(node.title) else { continue }
+            if let count = ChatTextNormalizer.unreadCount(from: text) {
+                return count
+            }
+        }
+        return nil
+    }
+
+    /// The row timestamp — "21:03", "어제", "3일". Filtered out of title and preview by
+    /// isTimeLikeValue, which is exactly the predicate that identifies it here.
+    private func extractTimeLabel(from row: UIElement) -> String? {
+        let nodes = row.findAll(role: kAXStaticTextRole, limit: 16, maxNodes: 100)
+        for node in nodes {
+            guard let text = normalizedText(node.stringValue) ?? normalizedText(node.title) else { continue }
+            if ChatTextNormalizer.isTimeLikeValue(text) {
+                return text
+            }
+        }
         return nil
     }
 

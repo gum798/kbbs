@@ -83,6 +83,18 @@ struct Width {
         return fitted + String(repeating: " ", count: limit - width(of: fitted))
     }
 
+    /// Like `truncate`, but marks the cut with `…` so a shortened room name reads as
+    /// shortened rather than as a different room. "고등학교 3학년 2반 동창회" cut to
+    /// "고등학교 3학년 2반" is a plausible name for a different group.
+    func elide(_ text: String, to limit: Int) -> String {
+        guard limit > 0 else { return "" }
+        if width(of: text) <= limit { return text }
+        let marker = "…"
+        let markerCells = width(of: marker)
+        guard limit > markerCells else { return marker }
+        return truncate(text, to: limit - markerCells) + marker
+    }
+
     // MARK: - Convenience for the default (narrow-ambiguous) terminal
 
     private static let narrow = Width()
@@ -90,6 +102,12 @@ struct Width {
     static func cells(_ text: String) -> Int { narrow.width(of: text) }
     static func truncate(_ text: String, to limit: Int) -> String { narrow.truncate(text, to: limit) }
     static func pad(_ text: String, to limit: Int) -> String { narrow.pad(text, to: limit) }
+    static func elide(_ text: String, to limit: Int) -> String { narrow.elide(text, to: limit) }
+
+    /// Elide, then pad to exactly `limit` cells. The common case for a table column.
+    static func column(_ text: String, to limit: Int) -> String {
+        narrow.pad(narrow.elide(text, to: limit), to: limit)
+    }
 
     // MARK: - Tables
 
