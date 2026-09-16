@@ -132,4 +132,42 @@ final class FrameTests: XCTestCase {
             XCTAssertEqual(cells(row), 80, "row \(i) is not 80 cells")
         }
     }
+    // MARK: - Control characters (seen in a real KakaoTalk chat list)
+
+    /// A KakaoTalk preview can carry a literal newline — "[모빙]\n고객님 안녕하세요!".
+    /// Width counts a control character as zero cells, so a row holding one measured as
+    /// full and was emitted verbatim; the terminal then broke the line and every box
+    /// border below it walked. Observed on a real chat list, rows 4/7/8/10.
+    func testARowCarryingANewlineStillRendersAsOneLine() {
+        var f = Frame(width: 20, height: 1)
+        f.set(0, "[모빙]\n고객님")
+        let row = f.render()[0]
+        XCTAssertFalse(row.contains("\n"), "row still contains a line break: \(row)")
+        XCTAssertEqual(Width.cells(Frame.stripANSI(row)), 20)
+    }
+
+    func testANewlineBecomesASpaceRatherThanVanishing() {
+        var f = Frame(width: 12, height: 1)
+        f.set(0, "가\n나")
+        XCTAssertEqual(Frame.stripANSI(f.render()[0]), "가 나" + String(repeating: " ", count: 7))
+    }
+
+    func testCarriageReturnAndTabAreAlsoNeutralised() {
+        var f = Frame(width: 10, height: 1)
+        f.set(0, "a\rb\tc")
+        let row = f.render()[0]
+        XCTAssertEqual(Frame.stripANSI(row), "a b c     ")
+    }
+
+    func testEveryRowOfAFrameHoldingControlCharactersIsExactlyWidthCells() {
+        var f = Frame(width: 80, height: 3)
+        f.set(0, "정상 행")
+        f.set(1, "미리보기\n둘째 줄\r셋째")
+        f.set(2, "\u{1B}[7m반전\u{1B}[0m\n꼬리")
+        for (index, row) in f.render().enumerated() {
+            XCTAssertFalse(row.contains("\n"), "row \(index) contains a line break")
+            XCTAssertEqual(Width.cells(Frame.stripANSI(row)), 80, "row \(index) is not 80 cells")
+        }
+    }
+
 }

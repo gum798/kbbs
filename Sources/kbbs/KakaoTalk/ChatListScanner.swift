@@ -25,7 +25,17 @@ enum ChatTextNormalizer {
     }
 
     static func isTimeLikeValue(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // KakaoTalk writes today's rooms as "오후 1:21". Without this the whole top of
+        // the chat list — every room from today — came back with no timestamp at all,
+        // while 어제 and N일 rows below it were filled in.
+        for meridiem in ["오전", "오후", "AM", "PM"] where trimmed.hasPrefix(meridiem) {
+            trimmed = String(trimmed.dropFirst(meridiem.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            break
+        }
+
         let parts = trimmed.split(separator: ":")
         if parts.count == 2,
            parts[0].count <= 2, parts[1].count == 2,
@@ -39,6 +49,35 @@ enum ChatTextNormalizer {
         }
 
         return false
+    }
+
+    /// A timestamp in the five cells the 시각 column has.
+    ///
+    /// KakaoTalk writes "오후 1:21"; the column holds "21:03". Anything that is not a
+    /// clock time — 어제, 3일 — is already short and is returned untouched.
+    static func compactTime(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let afternoon = ["오후", "PM"].first { trimmed.hasPrefix($0) }
+        let morning = ["오전", "AM"].first { trimmed.hasPrefix($0) }
+        guard let meridiem = afternoon ?? morning else { return trimmed }
+
+        let clock = String(trimmed.dropFirst(meridiem.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = clock.split(separator: ":")
+        guard parts.count == 2, var hour = Int(parts[0]), let minute = Int(parts[1]),
+              (1...12).contains(hour), (0...59).contains(minute)
+        else {
+            return trimmed
+        }
+
+        // 12 is the hinge in both directions: 오전 12시 is 00, 오후 12시 stays 12.
+        if afternoon != nil {
+            hour = hour == 12 ? 12 : hour + 12
+        } else {
+            hour = hour == 12 ? 0 : hour
+        }
+        return String(format: "%02d:%02d", hour, minute)
     }
 
     /// The unread badge as a number, or nil if this text is not a badge.
@@ -254,7 +293,7 @@ struct ChatListScanner {
         for node in nodes {
             guard let text = normalizedText(node.stringValue) ?? normalizedText(node.title) else { continue }
             if ChatTextNormalizer.isTimeLikeValue(text) {
-                return text
+                return ChatTextNormalizer.compactTime(text)
             }
         }
         return nil

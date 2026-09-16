@@ -89,6 +89,19 @@ struct Frame {
                 i = end
                 continue
             }
+            // A control character measures zero cells but acts on the terminal: a newline
+            // in a chat preview broke the row in two and every border below it walked.
+            // Substituting a space keeps the accounting honest — it is one cell now.
+            if Width.isControl(chars[i]) {
+                if used + 1 > limit {
+                    truncated = true
+                    break
+                }
+                used += 1
+                out.append(" ")
+                i += 1
+                continue
+            }
             let w = Width.cells(String(chars[i]))
             if used + w > limit {
                 truncated = true

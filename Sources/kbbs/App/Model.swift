@@ -29,9 +29,12 @@ struct Room: Equatable {
         unreadCount: Int? = nil,
         hasWindow: Bool = false
     ) {
-        self.title = title
-        self.lastMessage = lastMessage
-        self.timeLabel = timeLabel
+        // Flattened here rather than at render time: a control character measures zero
+        // cells, so a column padded around one is a cell over budget and the row loses
+        // its right border. The row has to be built from text that is already one line.
+        self.title = Width.oneLine(title)
+        self.lastMessage = lastMessage.map(Width.oneLine)
+        self.timeLabel = timeLabel.map(Width.oneLine)
         self.unreadCount = unreadCount
         self.hasWindow = hasWindow
     }

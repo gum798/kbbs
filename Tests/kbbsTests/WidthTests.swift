@@ -184,4 +184,30 @@ extension WidthTests {
     func testElideIntoASingleCellIsJustTheMarker() {
         XCTAssertEqual(Width.elide("김민수", to: 1), "…")
     }
+    // MARK: - Emoji outside the astral planes (seen in a real chat list)
+
+    /// A room named "윤지원✨" made its row 81 cells wide. U+2728 lives in Dingbats, not
+    /// in the 1F300-1FAFF block the table covered, so it was counted as one cell while
+    /// every terminal draws it as two — and the right border walked on that row alone.
+    func testSparklesIsTwoCells() {
+        XCTAssertEqual(Width.cells("\u{2728}"), 2)
+    }
+
+    func testANameEndingInAnEmojiMeasuresCorrectly() {
+        XCTAssertEqual(Width.cells("윤지원\u{2728}"), 8)
+    }
+
+    func testWatchAndHourglassAreTwoCells() {
+        XCTAssertEqual(Width.cells("\u{231A}"), 2)
+        XCTAssertEqual(Width.cells("\u{231B}"), 2)
+    }
+
+    func testRedHeartWithEmojiPresentationIsTwoCells() {
+        XCTAssertEqual(Width.cells("\u{2764}\u{FE0F}"), 2)
+    }
+
+    func testTheSameHeartWithTextPresentationStaysNarrow() {
+        XCTAssertEqual(Width.cells("\u{2764}\u{FE0E}"), 1)
+    }
+
 }

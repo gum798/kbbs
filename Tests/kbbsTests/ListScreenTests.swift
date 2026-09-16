@@ -190,4 +190,34 @@ extension ListScreenTests {
     func testColumnsSumToInnerWidth() {
         XCTAssertEqual(ListScreen.columnTotal, ListScreen.inner)
     }
+    // MARK: - Text KakaoTalk actually hands us
+
+    /// A preview carrying a newline is not merely a rendering problem. Width counts the
+    /// control character as zero cells, so the column pads to its full 38 and the row
+    /// ends up one cell over budget — the right border is the thing that falls off.
+    /// Frame neutralising the character is not enough on its own; the row has to be
+    /// built from text that was already one line.
+    func testAPreviewWithANewlineKeepsTheRightBorder() {
+        var s = state(3)
+        s.rooms[0] = Room(
+            title: "모빙고객센터",
+            lastMessage: "[모빙]\n고객님 안녕하세요!",
+            timeLabel: "오후 1:21",
+            hasWindow: false
+        )
+        let rows = plain(ListScreen.render(s).render())
+        for (i, row) in rows.enumerated() {
+            XCTAssertEqual(Width.cells(row), 80, "row \(i)")
+            XCTAssertFalse(row.contains("\n"), "row \(i) contains a line break")
+        }
+        XCTAssertTrue(rows[5].hasSuffix("║"), "the right border is gone: \(rows[5])")
+    }
+
+    func testTheNewlineReadsAsASpaceInThePreview() {
+        var s = state(1)
+        s.rooms[0] = Room(title: "모빙고객센터", lastMessage: "[모빙]\n고객님 안녕하세요!")
+        let rows = plain(ListScreen.render(s).render())
+        XCTAssertTrue(rows[5].contains("[모빙] 고객님"), "preview reads: \(rows[5])")
+    }
+
 }

@@ -34,6 +34,12 @@ struct Width {
     /// into one glyph; taking the first non-zero-width one gives 1 for "e" + combining
     /// acute and 2 for a joined emoji family.
     private func width(ofCluster cluster: Character) -> Int {
+        // U+FE0F asks for the emoji rendering of a character that is otherwise text —
+        // "\u{2764}\u{FE0F}" is drawn two cells wide where "\u{2764}" alone is one.
+        if cluster.unicodeScalars.contains(where: { $0.value == 0xFE0F }) {
+            return 2
+        }
+
         for scalar in cluster.unicodeScalars {
             let w = width(ofScalar: scalar)
             if w != 0 { return w }
@@ -109,7 +115,51 @@ struct Width {
         narrow.pad(narrow.elide(text, to: limit), to: limit)
     }
 
+    // MARK: - Control characters
+
+    /// Whether this grapheme is nothing but control characters.
+    ///
+    /// Note `\r\n` is ONE Character in Swift, which is why this asks about the cluster
+    /// rather than a single scalar. C1 and the Unicode line/paragraph separators count:
+    /// a terminal acts on those too.
+    static func isControl(_ character: Character) -> Bool {
+        !character.unicodeScalars.isEmpty && character.unicodeScalars.allSatisfy { scalar in
+            let v = scalar.value
+            return v < 0x20 || v == 0x7F || (0x80...0x9F).contains(v) || v == 0x2028 || v == 0x2029
+        }
+    }
+
+    /// The text as one line: every run of control characters becomes a single space, and
+    /// the result is trimmed.
+    ///
+    /// KakaoTalk chat previews carry real newlines — "[모빙]\n고객님 안녕하세요!" is one
+    /// preview, not two. Dropping the character would read as "[모빙]고객님"; keeping it
+    /// breaks the row in half. A space is what the user sees in KakaoTalk's own list.
+    static func oneLine(_ text: String) -> String {
+        var out = String()
+        var pendingSpace = false
+        for character in text {
+            if isControl(character) {
+                pendingSpace = !out.isEmpty
+                continue
+            }
+            if pendingSpace {
+                out.append(" ")
+                pendingSpace = false
+            }
+            out.append(character)
+        }
+        return out.trimmingCharacters(in: .whitespaces)
+    }
+
     // MARK: - Tables
+
+    /// The tables are binary-searched, so their order is load-bearing. Sorting them here
+    /// rather than by hand means a range added in the wrong place cannot quietly break
+    /// the width of every character above it.
+    private static func sorted(_ ranges: [ClosedRange<UInt32>]) -> [ClosedRange<UInt32>] {
+        ranges.sorted { $0.lowerBound < $1.lowerBound }
+    }
 
     private static func contains(_ ranges: [ClosedRange<UInt32>], _ v: UInt32) -> Bool {
         var lo = 0
@@ -124,8 +174,19 @@ struct Width {
     }
 
     /// East Asian Wide and Fullwidth. Always two cells, in every terminal.
-    private static let wideRanges: [ClosedRange<UInt32>] = [
+    private static let wideRanges: [ClosedRange<UInt32>] = sorted([
         0x1100...0x115F,    // Hangul Jamo, conjoining leading — decomposed Hangul
+        // Emoji_Presentation=Yes below U+1F300. Missed entirely until a room named
+        // "윤지원\u{2728}" drew its row one cell too wide.
+        0x231A...0x231B, 0x23E9...0x23EC, 0x23F0...0x23F0, 0x23F3...0x23F3,
+        0x25FD...0x25FE, 0x2614...0x2615, 0x2648...0x2653, 0x267F...0x267F,
+        0x2693...0x2693, 0x26A1...0x26A1, 0x26AA...0x26AB, 0x26BD...0x26BE,
+        0x26C4...0x26C5, 0x26CE...0x26CE, 0x26D4...0x26D4, 0x26EA...0x26EA,
+        0x26F2...0x26F3, 0x26F5...0x26F5, 0x26FA...0x26FA, 0x26FD...0x26FD,
+        0x2705...0x2705, 0x270A...0x270B, 0x2728...0x2728, 0x274C...0x274C,
+        0x274E...0x274E, 0x2753...0x2755, 0x2757...0x2757, 0x2795...0x2797,
+        0x27B0...0x27B0, 0x27BF...0x27BF, 0x2B1B...0x2B1C, 0x2B50...0x2B50,
+        0x2B55...0x2B55,
         0x2E80...0x303E,    // CJK radicals, Kangxi, CJK symbols — includes U+3000 ideographic space
         0x3041...0x33FF,    // Kana, Bopomofo, Hangul Compatibility Jamo (ㅋㅋㅋ lives at 3130-318F)
         0x3400...0x4DBF,    // CJK Extension A
@@ -139,19 +200,21 @@ struct Width {
         0xFE30...0xFE6F,    // CJK compatibility forms, small form variants
         0xFF00...0xFF60,    // Fullwidth ASCII forms
         0xFFE0...0xFFE6,    // Fullwidth signs
+        0x1F004...0x1F004, 0x1F0CF...0x1F0CF, 0x1F18E...0x1F18E,
+        0x1F191...0x1F19A, 0x1F200...0x1F2FF,
         0x1F300...0x1F64F,  // Emoji: symbols, pictographs, emoticons
         0x1F680...0x1F6FF,  // Emoji: transport
         0x1F900...0x1F9FF,  // Emoji: supplemental
         0x1FA70...0x1FAFF,  // Emoji: extended-A
         0x20000...0x2FFFD,  // CJK Extension B and beyond
         0x30000...0x3FFFD,
-    ]
+    ])
 
     /// East Asian Ambiguous: one cell in a Western terminal, two in a CJK-configured
     /// one. This list is scoped to what kbbs itself draws — the frame, the cursor, the
     /// line indicator, the separators in the status rows — because those are the glyphs
     /// whose misjudgement breaks the layout. The boot probe measures them for real.
-    private static let ambiguousRanges: [ClosedRange<UInt32>] = [
+    private static let ambiguousRanges: [ClosedRange<UInt32>] = sorted([
         0x00A1...0x00A1, 0x00A4...0x00A4, 0x00A7...0x00A8,
         0x00AA...0x00AA, 0x00AD...0x00AE, 0x00B0...0x00B4,
         0x00B6...0x00BA, 0x00BC...0x00BF,   // includes U+00B7 · used in the status rows
@@ -169,5 +232,5 @@ struct Width {
         0x261C...0x261C, 0x261E...0x261E,
         0x2640...0x2640, 0x2642...0x2642,
         0x2660...0x266F,
-    ]
+    ])
 }
