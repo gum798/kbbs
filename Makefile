@@ -37,6 +37,9 @@ lint-print: ## Fail if a deleted hazard is reintroduced
 		-e 'printHierarchy' \
 		Sources/ \
 		|| (echo "^^ a hazard deleted on purpose has come back"; exit 1)
+	@! grep -nE 'UIElement|AXUIElement|KakaoTalkApp|ChatListScanner|RoomReader' \
+		Sources/kbbs/App/Loop.swift Sources/kbbs/UI/*.swift \
+		|| (echo "^^ the main thread must not touch Accessibility — send it to AXWorker"; exit 1)
 	@echo "lint-print: clean"
 
 version: ## Print the current version

@@ -60,7 +60,7 @@ struct Kbbs: ParsableCommand {
         if demo {
             ladder.step("예시 모드", "확인", detail: "카카오톡을 읽지 않습니다")
             ladder.connected()
-            run(rooms: Kbbs.demoRooms) { Kbbs.demoRooms }
+            run(rooms: Kbbs.demoRooms, worker: nil) { Kbbs.demoRooms }
             return
         }
 
@@ -144,22 +144,10 @@ struct Kbbs: ParsableCommand {
         ladder.note("잠금 화면은 건드리지 않습니다. 암호를 여러 번 틀리면 계정이 로그아웃됩니다.")
         ladder.connected()
 
-        let rescan: () -> [Room]? = {
-            let found = scanner.scan(in: listWindow, limit: limit, trace: tracer)
-            guard !found.isEmpty else { return nil }
-            let open = Set(app.windows.compactMap { $0.title })
-            return found.map { item in
-                Room(
-                    title: item.discovery.title,
-                    lastMessage: item.discovery.lastMessage,
-                    timeLabel: item.discovery.timeLabel,
-                    unreadCount: item.discovery.unreadCount,
-                    hasWindow: Kbbs.hasOpenWindow(item.discovery.title, among: open, listWindow: listWindow.title)
-                )
-            }
-        }
-
-        run(rooms: rooms, rescan: rescan)
+        // Every Accessibility call from here on runs on the worker's queue. The main
+        // thread has made its last one.
+        let worker = AXWorker(kakao: app, listWindow: listWindow, trace: trace)
+        run(rooms: rooms, worker: worker)
     }
 
     /// Straight into one conversation, skipping the list.
@@ -205,10 +193,14 @@ struct Kbbs: ParsableCommand {
             return
         }
 
+        // The list window is not needed to sit in one conversation, and is often the
+        // window that is closed.
+        let worker = AXWorker(kakao: kakao, listWindow: nil, trace: trace)
+        let token = worker.adopt(opened)
         enterTerminal { loop in
-            loop.enter(room: state, opened: opened)
+            loop.enter(room: state, token: token)
         } build: {
-            Loop(rooms: [], link: .live(lastRefresh: Date()), reader: reader, readLimit: limit) { nil }
+            Loop(rooms: [], link: .live(lastRefresh: Date()), worker: worker, readLimit: limit)
         }
     }
 
@@ -242,7 +234,7 @@ struct Kbbs: ParsableCommand {
     }
 
     /// One frame to stdout, or the whole terminal, depending on `--once`.
-    private func run(rooms: [Room], rescan: @escaping () -> [Room]?) {
+    private func run(rooms: [Room], worker: AXWorker?, demoRescan: (() -> [Room])? = nil) {
         if once {
             var state = ListState()
             state.rooms = rooms
@@ -258,9 +250,9 @@ struct Kbbs: ParsableCommand {
             Loop(
                 rooms: rooms,
                 link: .live(lastRefresh: Date()),
-                reader: demo ? nil : try? RoomReader(kakao: KakaoTalkApp(), trace: trace),
+                worker: worker,
                 readLimit: limit,
-                refresh: rescan
+                demoRescan: demoRescan
             )
         }
     }

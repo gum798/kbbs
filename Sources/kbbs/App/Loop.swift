@@ -3,34 +3,27 @@ import Foundation
 
 /// The run loop: one thread, one screen at a time, a 100ms heartbeat.
 ///
-/// Every iteration is the same five steps — wait for input up to 100ms, decode what
-/// arrived, service the signal flags, expire whatever has timed out, and repaint if the
-/// frame changed. The 100ms is what makes the clock tick while nothing is being typed,
-/// and it is the whole reason the screen can look alive during work it cannot cancel.
+/// This thread owns the model and the rendering and NOTHING else. It makes no
+/// Accessibility call — not one, not even to count windows. Work goes to the worker's
+/// serial queue and comes back as values through the mailbox, which is why a four-second
+/// transcript read no longer stops the clock, the ●○○ indicator or the cursor keys.
 ///
-/// In M4 the Accessibility calls still run inline on this thread, so a scan or a read
-/// blocks the loop for as long as KakaoTalk takes. That is M3's problem to move onto a
-/// worker; until then the screen says so before it goes away rather than appearing to
-/// hang.
+/// Each iteration: wait up to 100ms for input, decode it, service the signal flags,
+/// expire timers, drain the mailbox, queue at most one job, and repaint if the frame
+/// changed. The 100ms timeout is the heartbeat and the only sleep on this thread.
 struct Loop {
     private static let escapeGrace: TimeInterval = 0.025
     private static let bufferIdle: TimeInterval = 3.0
     private static let noteLife: TimeInterval = 2.5
-    /// The floor for re-reading an open conversation. The actual interval is derived
-    /// from how long the last read took — see `nextPollDelay`.
+    /// How often an open conversation is re-read, now that a read no longer blocks the
+    /// screen. Measured cost is 3-9s, so this is a floor rather than a promise.
     private static let roomPoll: TimeInterval = 3.0
-    /// How often the waiting screen checks whether you have opened the room yourself.
+    /// How often the chat list is re-scanned while it is the screen you are looking at.
+    private static let listPoll: TimeInterval = 15.0
     private static let windowWatch: TimeInterval = 1.0
 
-    private enum Screen {
-        case list
-        case room
-        /// The room has no KakaoTalk window, so kbbs waits for one rather than
-        /// conjuring it: see `WaitingState`.
-        case waiting
-    }
+    private enum Screen { case list, room, waiting }
 
-    /// What the screen shows while it waits for a window it will not open itself.
     private struct WaitingState {
         let title: String
         var since: Date
@@ -48,45 +41,39 @@ struct Loop {
     private var bufferTouchedAt: Date?
     private var noteSetAt: Date?
     private var nextRoomPoll: Date?
+    private var nextListPoll: Date?
     private var nextWindowWatch: Date?
 
-    private var opened: RoomReader.Opened?
-    /// How long the last transcript read took. The poll cadence follows it.
-    private var lastReadSeconds: TimeInterval?
+    /// Bumped whenever the user changes their mind. Results stamped with anything older
+    /// are read off the mailbox and dropped — abandonment, not cancellation, because an
+    /// Accessibility call in flight cannot be stopped.
+    private var generation = 1
+    /// Touched only by this thread. At most one job is outstanding at a time, which is
+    /// what keeps the queue from filling with reads nobody is waiting for any more.
+    private var axBusy = false
+    private var roomToken: Int?
+    private var readFailures = 0
 
-    /// Measured, not assumed: a warm read of a real room costs 3-9 seconds, so a fixed
-    /// 3s cadence would mean reading continuously and — while the calls are still inline
-    /// on this thread — a screen that is frozen more often than it is alive. Three times
-    /// the last read leaves the loop responsive for twice as long as it is blocked.
-    private var nextPollDelay: TimeInterval {
-        guard let last = lastReadSeconds else { return Self.roomPoll }
-        return max(Self.roomPoll, last * 3)
-    }
-
-    private let refresh: () -> [Room]?
-    private let reader: RoomReader?
+    private let worker: AXWorker?
     private let readLimit: Int
+    private let demoRescan: (() -> [Room])?
 
-    init(
-        rooms: [Room],
-        link: LinkState,
-        reader: RoomReader?,
-        readLimit: Int = 60,
-        refresh: @escaping () -> [Room]?
-    ) {
-        self.refresh = refresh
-        self.reader = reader
+    init(rooms: [Room], link: LinkState, worker: AXWorker?, readLimit: Int = 60, demoRescan: (() -> [Room])? = nil) {
+        self.worker = worker
         self.readLimit = readLimit
+        self.demoRescan = demoRescan
         list.rooms = rooms
         list.link = link
+        nextListPoll = Date().addingTimeInterval(Self.listPoll)
     }
 
     /// Start already inside a conversation, as `--room` does.
-    mutating func enter(room: RoomState, opened: RoomReader.Opened) {
-        self.roomState = room
-        self.opened = opened
-        self.screen = .room
-        self.nextRoomPoll = Date().addingTimeInterval(Self.roomPoll)
+    mutating func enter(room: RoomState, token: Int) {
+        roomState = room
+        roomToken = token
+        screen = .room
+        nextRoomPoll = Date().addingTimeInterval(Self.roomPoll)
+        nextListPoll = nil
     }
 
     mutating func run() {
@@ -105,12 +92,97 @@ struct Loop {
 
             if RawMode.takeResize() { lastFrame = [] }
 
+            drainResults()
             expireTimers()
-            serviceRoomPoll()
-            serviceWindowWatch()
+            serviceTimers()
+            applyDelayTier()
             tickClocks()
             paint()
         }
+    }
+
+    // MARK: - Results
+
+    private mutating func drainResults() {
+        guard let worker else { return }
+        for result in worker.collect(generation: generation) {
+            axBusy = false
+            apply(result)
+        }
+    }
+
+    private mutating func apply(_ result: AXResult) {
+        switch result {
+        case .list(let rooms, let elapsed):
+            list.rooms = rooms
+            list.page = min(list.page, list.pageCount - 1)
+            list.cursor = min(list.cursor, max(0, list.roomsOnPage - 1))
+            list.link = .live(lastRefresh: Date())
+            say(String(format: "%d개 · %.1f초", rooms.count, elapsed))
+            nextListPoll = Date().addingTimeInterval(Self.listPoll)
+
+        case .opened(let token, let title, let matched, let elapsed):
+            roomToken = token
+            var state = RoomState(title: title)
+            state.matchedWindowTitle = matched
+            state.link = .live(lastRefresh: Date())
+            state.note = String(format: "열기 %.1f초 · 읽는 중…", elapsed)
+            roomState = state
+            waiting = nil
+            screen = .room
+            nextWindowWatch = nil
+            nextListPoll = nil
+            lastFrame = []
+            submit(.readRoom(token: token, title: title, limit: readLimit))
+
+        case .read(let token, let snapshot, let elapsed):
+            guard roomToken == token, var room = roomState else { break }
+            readFailures = 0
+            room.messages = snapshot.messages
+            room.link = .live(lastRefresh: Date())
+            room.pollSeconds = Self.roomPoll
+            room.note = String(format: "%d개 · 읽기 %.1f초", snapshot.count, elapsed)
+            noteSetAt = Date()
+            roomState = room
+            nextRoomPoll = Date().addingTimeInterval(Self.roomPoll)
+
+        case .noWindow(let title, _):
+            waiting = WaitingState(title: title, since: Date())
+            screen = .waiting
+            roomState = nil
+            nextWindowWatch = Date().addingTimeInterval(Self.windowWatch)
+            lastFrame = []
+
+        case .failed(let reason):
+            readFailures += 1
+            let wait = Backoff.interval(afterFailures: readFailures) ?? Self.roomPoll
+            switch screen {
+            case .room:
+                roomState?.link = .down(since: Date(), reason: reason)
+                roomState?.note = "\(reason) · \(Int(wait))초 뒤 다시"
+                nextRoomPoll = Date().addingTimeInterval(wait)
+            case .list:
+                list.link = .down(since: Date(), reason: reason)
+                say(reason)
+                nextListPoll = Date().addingTimeInterval(wait)
+            case .waiting:
+                nextWindowWatch = Date().addingTimeInterval(Self.windowWatch)
+            }
+            noteSetAt = Date()
+        }
+    }
+
+    private mutating func submit(_ job: AXJob) {
+        guard let worker, !axBusy else { return }
+        axBusy = true
+        worker.submit(job, generation: generation)
+    }
+
+    /// The user changed their mind. Anything in flight still runs to completion on the
+    /// worker — it cannot be stopped — but its answer will be dropped on arrival.
+    private mutating func abandonInFlight() {
+        generation += 1
+        axBusy = false
     }
 
     // MARK: - Keys
@@ -166,9 +238,9 @@ struct Loop {
         return .carryOn
     }
 
-    /// Reading only. Typing goes into the composer but Enter does not send yet — the
-    /// send machine is M6, and a key that looks like it sent but did not would be the
-    /// worst possible lie for this program to tell.
+    /// Reading only. Typing fills the composer but Enter does not send: the send machine
+    /// is M6, and a key that looks like it sent but did not is the worst lie this program
+    /// could tell.
     private mutating func handleRoom(_ key: Key) -> Outcome {
         guard var room = roomState else { return .carryOn }
         let composerEmpty = room.composer.isEmpty
@@ -184,7 +256,11 @@ struct Loop {
         case .control("l"):
             lastFrame = []
         case .char("r"), .char("R") where composerEmpty:
-            pollRoom(force: true)
+            if let token = roomToken {
+                room.note = "읽는 중…"
+                roomState = room
+                submit(.readRoom(token: token, title: room.title, limit: readLimit))
+            }
             return .carryOn
         case .backspace:
             if !room.composer.isEmpty { room.composer.removeLast() }
@@ -194,7 +270,6 @@ struct Loop {
                 noteSetAt = Date()
             }
         case .char(let c):
-            // 300 codepoints is KakaoTalk's own ceiling; past it the keys stop counting.
             if room.composer.unicodeScalars.count < 300 {
                 room.composer.append(c)
             } else {
@@ -216,6 +291,8 @@ struct Loop {
             waiting = nil
             screen = .list
             nextWindowWatch = nil
+            nextListPoll = Date().addingTimeInterval(Self.listPoll)
+            abandonInFlight()
             lastFrame = []
         case .control("l"):
             lastFrame = []
@@ -238,110 +315,91 @@ struct Loop {
         list.clearNumberBuffer()
         bufferTouchedAt = nil
 
-        guard let reader else {
+        guard worker != nil else {
             say("예시 모드에서는 대화를 열 수 없습니다")
             return
         }
-
-        say("「\(room.title)」 여는 중…")
-        paint()
-
-        guard let opened = try? reader.open(title: room.title) else {
-            // No window, or the context would not resolve. kbbs does not open one: that
-            // brings KakaoTalk to the front, which is never a side effect of a read.
-            waiting = WaitingState(title: room.title, since: Date())
-            screen = .waiting
-            nextWindowWatch = Date().addingTimeInterval(Self.windowWatch)
-            lastFrame = []
+        guard !axBusy else {
+            say("[대기중] 카카오톡을 읽고 있습니다")
             return
         }
-
-        self.opened = opened
-        var state = RoomState(title: room.title)
-        state.matchedWindowTitle = opened.matchedTitle
-        state.link = .live(lastRefresh: Date())
-        roomState = state
-        screen = .room
-        lastFrame = []
-        pollRoom(force: true)
+        say("「\(room.title)」 여는 중…")
+        submit(.openRoom(title: room.title))
     }
 
     private mutating func leaveRoom() {
+        if let token = roomToken { worker?.release(token: token) }
+        roomToken = nil
         roomState = nil
-        opened = nil
         nextRoomPoll = nil
+        nextListPoll = Date().addingTimeInterval(Self.listPoll)
+        readFailures = 0
         screen = .list
+        abandonInFlight()
         lastFrame = []
-    }
-
-    private mutating func pollRoom(force: Bool) {
-        guard let reader, let opened, var room = roomState else { return }
-        if force { room.note = "읽는 중…" }
-        roomState = room
-        if force { paint() }
-
-        guard let read = reader.read(opened, title: room.title, limit: readLimit) else {
-            room.link = .down(since: Date(), reason: "읽기 실패")
-            room.note = "읽지 못했습니다"
-            noteSetAt = Date()
-            roomState = room
-            nextRoomPoll = Date().addingTimeInterval(nextPollDelay)
-            return
-        }
-
-        room.messages = read.snapshot.messages
-        room.link = .live(lastRefresh: Date())
-        lastReadSeconds = read.elapsed
-        room.pollSeconds = nextPollDelay
-        room.note = String(format: "%d개 · 읽기 %.1f초 · 다음 %.0f초 뒤", read.snapshot.count, read.elapsed, nextPollDelay)
-        noteSetAt = Date()
-        roomState = room
-        nextRoomPoll = Date().addingTimeInterval(nextPollDelay)
-    }
-
-    private mutating func serviceRoomPoll() {
-        guard screen == .room, let due = nextRoomPoll, Date() >= due else { return }
-        pollRoom(force: false)
-    }
-
-    /// The waiting screen's whole job: notice the moment the user opens the room in
-    /// KakaoTalk themselves, and slide into it.
-    private mutating func serviceWindowWatch() {
-        guard screen == .waiting, let waiting, let reader,
-              let due = nextWindowWatch, Date() >= due
-        else {
-            return
-        }
-        nextWindowWatch = Date().addingTimeInterval(Self.windowWatch)
-        guard let opened = try? reader.open(title: waiting.title) else { return }
-
-        self.opened = opened
-        var state = RoomState(title: waiting.title)
-        state.matchedWindowTitle = opened.matchedTitle
-        state.link = .live(lastRefresh: Date())
-        roomState = state
-        self.waiting = nil
-        screen = .room
-        lastFrame = []
-        pollRoom(force: true)
     }
 
     private mutating func rescan() {
-        say("읽는 중… 카카오톡이 응답할 때까지 화면이 멈춥니다")
-        paint()
-        if let rooms = refresh() {
-            list.rooms = rooms
-            list.page = min(list.page, list.pageCount - 1)
-            list.cursor = min(list.cursor, max(0, list.roomsOnPage - 1))
-            list.link = .live(lastRefresh: Date())
-            say("\(rooms.count)개 읽음")
-        } else {
-            list.link = .down(since: Date(), reason: "읽기 실패")
-            say("읽지 못했습니다")
+        if let demoRescan {
+            list.rooms = demoRescan()
+            say("\(list.rooms.count)개 읽음")
+            return
+        }
+        guard !axBusy else {
+            say("[대기중] 이미 읽고 있습니다")
+            return
+        }
+        say("읽는 중…")
+        submit(.scanList(limit: readLimit))
+    }
+
+    // MARK: - Timers
+
+    private mutating func serviceTimers() {
+        let now = Date()
+
+        if screen == .room, let due = nextRoomPoll, now >= due, !axBusy, let token = roomToken,
+           let title = roomState?.title {
+            submit(.readRoom(token: token, title: title, limit: readLimit))
+            nextRoomPoll = now.addingTimeInterval(Self.roomPoll)
+        }
+
+        if screen == .list, let due = nextListPoll, now >= due, !axBusy, worker != nil {
+            submit(.scanList(limit: readLimit))
+            nextListPoll = now.addingTimeInterval(Self.listPoll)
+        }
+
+        if screen == .waiting, let waiting, let due = nextWindowWatch, now >= due, !axBusy {
+            nextWindowWatch = now.addingTimeInterval(Self.windowWatch)
+            submit(.openRoom(title: waiting.title))
         }
     }
 
-    // MARK: - Timers and painting
+    /// Say out loud that a call is taking a long time, and past six seconds say the one
+    /// thing that is literally true about it.
+    private mutating func applyDelayTier() {
+        guard let running = worker?.running() else { return }
+        let elapsed = running.elapsed
+        let tier = DelayTier.of(elapsed: elapsed)
+        guard let badge = tier.badge(elapsed: elapsed) else { return }
+
+        var text = running.label + " " + badge
+        if let advice = tier.advice { text += " — " + advice }
+        let down = LinkState.down(since: running.startedAt, reason: "응답 없음")
+        let slow = LinkState.slow(since: running.startedAt)
+
+        switch screen {
+        case .list:
+            list.note = text
+            list.link = tier == .stuck ? down : slow
+        case .room:
+            roomState?.note = text
+            roomState?.link = tier == .stuck ? down : slow
+        case .waiting:
+            break
+        }
+        noteSetAt = Date()
+    }
 
     private mutating func say(_ note: String) {
         switch screen {
@@ -371,8 +429,8 @@ struct Loop {
         roomState?.clock = now
     }
 
-    /// One write(2) of at most 24 lines, positioned with `ESC[H` and cleared per line
-    /// with `ESC[K`. No `ESC[2J` anywhere: clearing the whole screen is what flickers.
+    // MARK: - Painting
+
     private mutating func paint() {
         let size = RawMode.size()
         let rows: [String]
