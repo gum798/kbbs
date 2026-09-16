@@ -14,6 +14,14 @@ struct TranscriptMessage: Encodable, Equatable, Sendable {
     /// label's AXHelp tooltip. nil when the tooltip was unavailable.
     let date: String?
 
+    /// Which side of the window the bubble was on: "left", "right" or "unknown".
+    /// Debug detail, deliberately absent from the encoded form.
+    let side: String
+    /// How the author was decided: "explicit", "default-me", "left-unresolved",
+    /// "left-time-guard" or "unknown". The screen needs this to tell a confident
+    /// attribution from a fallback that looks identical.
+    let authorSource: String
+
     var hasImage: Bool {
         imageCount > 0
     }
@@ -43,7 +51,9 @@ struct TranscriptMessage: Encodable, Equatable, Sendable {
         attachmentCount: Int = 0,
         isSystem: Bool,
         logicalTimestamp: Date?,
-        date: String? = nil
+        date: String? = nil,
+        side: String = "unknown",
+        authorSource: String = "unknown"
     ) {
         self.author = author
         self.timeRaw = timeRaw
@@ -54,6 +64,8 @@ struct TranscriptMessage: Encodable, Equatable, Sendable {
         self.isSystem = isSystem
         self.logicalTimestamp = logicalTimestamp
         self.date = date
+        self.side = side
+        self.authorSource = authorSource
     }
 
     func encode(to encoder: Encoder) throws {
@@ -357,7 +369,9 @@ struct KakaoTalkTranscriptReader {
                     dateAnchor: currentDateAnchor,
                     referenceDate: referenceDate
                 ),
-                date: resolvedDate
+                date: resolvedDate,
+                side: side.rawValue,
+                authorSource: resolvedAuthor.source
             )
             messages.append(message)
             if selectedLogs < 10 {
@@ -370,13 +384,14 @@ struct KakaoTalkTranscriptReader {
 
         runner.log("read: row parser messages=\(messages.count)")
 
-        if messages.isEmpty || messages.count < max(3, min(limit / 2, 8)) {
-            let fallback = extractFallbackMessages(from: transcriptRoot, limit: limit, referenceDate: referenceDate)
+        let rowMessages = messages
+        var fallback: [TranscriptMessage] = []
+        if rowMessages.isEmpty || rowMessages.count < max(3, min(limit / 2, 8)) {
+            fallback = extractFallbackMessages(from: transcriptRoot, limit: limit, referenceDate: referenceDate)
             runner.log("read: fallback messages=\(fallback.count)")
-            messages.append(contentsOf: fallback)
         }
 
-        return Array(deduplicateMessagesPreservingOrder(messages).suffix(limit))
+        return Array(TranscriptMerge.merge(rowMessages: rowMessages, fallback: fallback).suffix(limit))
     }
 
     private func directRowChildren(from element: UIElement) -> [UIElement] {
@@ -604,7 +619,10 @@ struct KakaoTalkTranscriptReader {
             }
         }
 
-        return Array(deduplicateMessagesPreservingOrder(messages).suffix(limit))
+        // NOT deduplicated. Two identical messages in a row are two messages — in Korean
+        // chat that is how people talk, and collapsing them loses one. The merge above
+        // drops only the copies of row-parsed messages this sweep re-found.
+        return Array(messages.suffix(limit))
     }
 
     private func extractRowMetadata(from row: UIElement) -> RowMetadata {
@@ -1106,20 +1124,6 @@ struct KakaoTalkTranscriptReader {
         return unique
     }
 
-    private func deduplicateMessagesPreservingOrder(_ messages: [TranscriptMessage]) -> [TranscriptMessage] {
-        var seen = Set<String>()
-        var unique: [TranscriptMessage] = []
-        unique.reserveCapacity(messages.count)
-
-        for message in messages {
-            let key = messageFingerprint(message)
-            if seen.contains(key) { continue }
-            seen.insert(key)
-            unique.append(message)
-        }
-
-        return unique
-    }
 
     private func shouldPromoteLinkTitle(for text: String) -> Bool {
         let lower = text.lowercased()
@@ -1186,10 +1190,6 @@ struct KakaoTalkTranscriptReader {
             return lhsY < rhsY
         }
     }
-}
-
-func messageFingerprint(_ message: TranscriptMessage) -> String {
-    "\(message.author ?? "")\u{1F}\(message.timeRaw ?? "")\u{1F}\(message.body)"
 }
 
 private struct RowMetadata {
