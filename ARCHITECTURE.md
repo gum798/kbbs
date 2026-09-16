@@ -52,6 +52,35 @@ macOS Accessibility API
 - **취소는 없다. 포기만 있다.** AX 호출은 멈출 수 없으므로 결과에 세대 도장을 찍고,
   낡은 답은 도착하면 버린다.
 
+## 진단
+
+카카오톡이 바뀌어서 뭔가 깨졌을 때. 전부 본문을 찍지 않는다.
+
+```bash
+kbbs open "방" --dry-run     # 클릭 직전까지 좌표·프레임·화면
+kbbs probe-send "방"         # 전송 경로. 넣었다 지우기만, 보내지 않음
+kbbs probe-send "방" --minimized   # 숨긴 창이 살아있는지
+kbbs keys                    # 터미널이 실제로 보내는 바이트
+kbbs inspect --depth 5       # AX 트리
+kbbs --room "방" --why       # 발신자를 어떻게 판정했는지
+```
+
+로그는 `~/.kbbs/kbbs.log`.
+
+## 빌드
+
+```bash
+make build      # swift build
+make test       # 330개. 카카오톡도 권한도 필요 없다
+make install    # ~/bin/kbbs, 고정 애드혹 서명
+make lint-print # 일부러 지운 위험 코드가 돌아오면 실패
+make release    # VERSION 올리고 커밋·태그
+```
+
+`.build/debug/kbbs` 말고 `~/bin/kbbs` 로 개발한다. macOS 는 손쉬운 사용 권한을
+**바이너리와 서명 조합**으로 기억하는데 `swift build` 는 매번 바이너리를 다시 쓴다.
+고정 경로와 고정 서명이 권한을 살려 둔다.
+
 ## 상태
 
 `~/.kbbs/` — `kbbs.log` 한 개뿐이다. 자격증명도, 캐시도, 대화 내용도 저장하지 않는다.
