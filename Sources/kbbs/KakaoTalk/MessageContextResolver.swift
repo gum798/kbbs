@@ -16,7 +16,7 @@ struct MessageContextResolver {
         kakao: KakaoTalkApp,
         runner: AXActionRunner,
         useCache: Bool = true,
-        interactionMode: ChatWindowInteractionMode = .allowUIAutomation
+        interactionMode: ChatWindowInteractionMode = .backgroundSafe
     ) {
         self.kakao = kakao
         self.runner = runner
@@ -102,13 +102,11 @@ struct MessageContextResolver {
                 return input
             }
 
-            if interactionMode == .backgroundSafe {
-                runner.log("read: background-safe mode; skipping chat window activation fallback")
-            } else {
-                kakao.activate()
-                _ = runner.focusWithVerification(chatWindow, label: "chat window", attempts: 1)
-                Thread.sleep(forTimeInterval: 0.05)
-            }
+            // No activation arm. A read that steals focus is indistinguishable from a
+            // send, and kbbs polls every few seconds — the user would lose their
+            // terminal continuously. If the input cannot be found quietly, it is not
+            // found.
+            runner.log("read: input not resolved on attempt \(attempt); not activating")
         }
 
         let appCandidates = collectMessageInputCandidates(from: kakao.applicationElement, limit: 90)
