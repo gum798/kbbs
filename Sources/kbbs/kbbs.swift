@@ -57,6 +57,9 @@ struct Kbbs: ParsableCommand {
     @Option(name: .long, help: "목록 대신 이 대화방을 연다 (카카오톡에 창이 이미 열려 있어야 한다)")
     var room: String?
 
+    @Flag(name: .long, help: "발신자를 어떻게 판정했는지 표준오류로 남긴다 (본문은 찍지 않는다)")
+    var why = false
+
     func run() throws {
         Paths.ensureDirectory()
         TTYOut.capture()
@@ -206,6 +209,14 @@ struct Kbbs: ParsableCommand {
             throw ExitCode.failure
         }
         ladder.step("대화 읽기", "\(read.snapshot.count)개", detail: String(format: "%.2f초", read.elapsed))
+
+        if why {
+            for (index, m) in read.snapshot.messages.enumerated() {
+                FileHandle.standardError.write(Data(
+                    "[why] \(index) side=\(m.side) source=\(m.authorSource) author=\(m.author ?? "(nil)") 표시=\(TranscriptAttribution.marker(for: m)) len=\(m.body.count)\n".utf8
+                ))
+            }
+        }
 
         var state = RoomState(title: title)
         state.messages = read.snapshot.messages

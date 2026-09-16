@@ -33,22 +33,38 @@ struct ProbeMenuCommand: ParsableCommand {
             throw ExitCode.failure
         }
 
-        let actions = (try? row.actionNames()) ?? []
-        print("행 액션        \(actions.isEmpty ? "(없음)" : actions.joined(separator: "|"))")
-        guard actions.contains("AXShowMenu") else {
-            print("AXShowMenu 를 광고하지 않습니다.")
+        print("행 액션        " + describe(row))
+
+        // The row exposes nothing; the cell inside it is what advertises AXShowMenu.
+        let cells = row.findAll(role: kAXCellRole, limit: 4, maxNodes: 40)
+        for (index, cell) in cells.enumerated() {
+            print("셀[\(index)] 액션   " + describe(cell))
+        }
+
+        guard let target = cells.first(where: { ((try? $0.actionNames()) ?? []).contains("AXShowMenu") }) ?? cells.first else {
+            print("셀을 찾지 못했습니다.")
             return
         }
 
+        // A context menu will not appear for an app that is not active, so give it the
+        // same conditions the double-click path gets.
+        let terminal = SystemFocusProbe.frontmostPID()
+        defer { if let terminal { SystemFocusProbe.activate(pid: terminal) } }
+        kakao.activateForSend()
+        _ = KakaoTalkApp.runningApplication.map { SystemFocusProbe.waitForFrontmost(pid: $0.processIdentifier, timeout: 1.5) }
+        try? listWindow.performAction(kAXRaiseAction)
+        Thread.sleep(forTimeInterval: 0.3)
+        print("전면 전환      최전면=\(SystemFocusProbe.frontmostPID().map(String.init) ?? "?") 카톡=\(KakaoTalkApp.runningApplication?.processIdentifier.description ?? "?")")
+
         let before = menuCount(in: kakao)
         do {
-            try row.performAction("AXShowMenu")
+            try target.performAction("AXShowMenu")
         } catch {
             print("AXShowMenu 실패: \(error)")
             print("→ 이 경로는 쓸 수 없습니다. 지금처럼 더블클릭으로 엽니다.")
             return
         }
-        Thread.sleep(forTimeInterval: 0.6)
+        Thread.sleep(forTimeInterval: 1.0)
 
         let menus = menus(in: kakao)
         print("열린 메뉴      \(menus.count)개 (전 \(before)개)")
@@ -68,8 +84,13 @@ struct ProbeMenuCommand: ParsableCommand {
         print("닫기           \(after <= before ? "확인" : "실패 — 카카오톡에서 아무 곳이나 클릭해 닫아 주세요")")
     }
 
+    private func describe(_ element: UIElement) -> String {
+        let actions = (try? element.actionNames()) ?? []
+        return actions.isEmpty ? "(없음)" : actions.joined(separator: "|")
+    }
+
     private func menus(in kakao: KakaoTalkApp) -> [UIElement] {
-        kakao.applicationElement.findAll(role: kAXMenuRole, limit: 8, maxNodes: 400)
+        kakao.applicationElement.findAll(role: kAXMenuRole, limit: 12, maxNodes: 1500)
     }
 
     private func menuCount(in kakao: KakaoTalkApp) -> Int {

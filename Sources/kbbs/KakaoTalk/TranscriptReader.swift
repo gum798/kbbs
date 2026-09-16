@@ -893,14 +893,9 @@ struct KakaoTalkTranscriptReader {
             return .unknown
         }
 
-        let ratio = (candidateFrame.midX - transcriptFrame.minX) / max(transcriptFrame.width, 1)
-        if ratio <= 0.56 {
-            return .left
-        }
-        if ratio >= 0.62 {
-            return .right
-        }
-        return .unknown
+        let side = MessageSideGuess.of(bubble: candidateFrame, in: transcriptFrame)
+        runner.log("geom: left=\(Int(candidateFrame.minX - transcriptFrame.minX)) right=\(Int(transcriptFrame.maxX - candidateFrame.maxX)) w=\(Int(candidateFrame.width)) side=\(side.rawValue)")
+        return side
     }
 
     private func resolveAuthorInSegment(
@@ -1264,7 +1259,7 @@ private struct RowAnalysis {
     }
 }
 
-private enum MessageSide: String, Hashable {
+enum MessageSide: String, Hashable {
     case left
     case right
     case unknown
