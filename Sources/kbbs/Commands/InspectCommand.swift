@@ -48,16 +48,12 @@ struct InspectCommand: ParsableCommand {
 
         let kakao = try KakaoTalkApp()
 
-        // Activate and wait for window if not visible
-        var windows = kakao.windows
-        if windows.isEmpty {
-            print("No windows found, activating KakaoTalk...")
-            _ = kakao.activateAndWaitForWindow(timeout: 3.0)
-            windows = kakao.windows
-        }
-
+        // Inspect reads the tree where it stands. It used to front KakaoTalk when no
+        // window was exposed; it no longer can, and the user opens the window instead.
+        let windows = kakao.windows
         guard !windows.isEmpty else {
             print("No KakaoTalk windows found.")
+            print("Open a KakaoTalk window yourself, then run this again.")
             throw ExitCode.failure
         }
 

@@ -72,9 +72,9 @@ struct Kbbs: ParsableCommand {
         }
         ladder.step("카카오톡 실행", "확인", detail: "PID \(running.processIdentifier)")
 
-        // autoLaunch: false — kbbs never starts KakaoTalk for you. Launching it would
-        // bring it to the front, and nothing before a deliberate send is allowed to.
-        let app = try KakaoTalkApp(autoLaunch: false)
+        // Binds to KakaoTalk where it sits. It cannot start it — the initializer has no
+        // way to, by construction, because starting it would bring it to the front.
+        let app = try KakaoTalkApp()
 
         guard let listWindow = app.chatListWindow else {
             ladder.step("대화목록 창", "없음")

@@ -29,6 +29,12 @@ lint-print: ## Fail if a deleted hazard is reintroduced
 		-e 'pressCommandW' \
 		-e 'forceTypeIntoChatWindow' \
 		-e 'NSWorkspace.shared.frontmostApplication' \
+		-e 'func launch(' \
+		-e 'forceOpen' \
+		-e 'ensureMainWindow' \
+		-e 'ensureWindowReopened' \
+		-e 'activateAndWaitForWindow' \
+		-e 'printHierarchy' \
 		Sources/ \
 		|| (echo "^^ a hazard deleted on purpose has come back"; exit 1)
 	@echo "lint-print: clean"
