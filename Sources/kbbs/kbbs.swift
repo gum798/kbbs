@@ -213,7 +213,7 @@ struct Kbbs: ParsableCommand {
         if why {
             for (index, m) in read.snapshot.messages.enumerated() {
                 FileHandle.standardError.write(Data(
-                    "[why] \(index) side=\(m.side) source=\(m.authorSource) author=\(m.author ?? "(nil)") 표시=\(TranscriptAttribution.marker(for: m)) len=\(m.body.count)\n".utf8
+                    "[why] \(index) y=\(m.orderKey.map { String(Int($0)) } ?? "nil") time=\(m.timeRaw ?? "-") side=\(m.side) source=\(m.authorSource) 표시=\(TranscriptAttribution.marker(for: m)) len=\(m.body.count)\n".utf8
                 ))
             }
         }

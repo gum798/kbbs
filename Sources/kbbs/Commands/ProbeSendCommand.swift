@@ -188,7 +188,7 @@ struct ProbeSendCommand: ParsableCommand {
         if let context = MessageContextResolver(kakao: kakao, runner: runner, interactionMode: .backgroundSafe)
             .resolve(in: window), (context.inputElement.stringValue ?? "").isEmpty {
             let stamp = "kbbs 최소화 확인 \(Int(Date().timeIntervalSince1970) % 10000)"
-            try? Sender(trace: trace).send(stamp, window: window, context: context)
+            _ = try? Sender(trace: trace).send(stamp, window: window, context: context)
             Thread.sleep(forTimeInterval: 2.5)
             let arrived = ((try? reader2.readSnapshot(from: context, chatWindow: window, fallbackChatTitle: room, limit: 20))?
                 .messages.map(\.body).contains { $0.contains(stamp) }) ?? false

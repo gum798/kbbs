@@ -170,7 +170,6 @@ struct KakaoTalkTranscriptReader {
         let t0 = Date()
         let messageRows = collectTranscriptRows(
             from: context.transcriptRoot,
-            inputElement: context.inputElement,
             messageLimit: limit,
             frameCache: frameCache
         )
@@ -202,7 +201,6 @@ struct KakaoTalkTranscriptReader {
 
     private func collectTranscriptRows(
         from transcriptRoot: UIElement,
-        inputElement: UIElement,
         messageLimit: Int,
         frameCache: FrameCache
     ) -> [UIElement] {
@@ -227,7 +225,7 @@ struct KakaoTalkTranscriptReader {
         }
 
         guard rows.count < targetRowCount else {
-            return finishRows(rows, inputElement: inputElement, frameCache: frameCache, messageLimit: messageLimit)
+            return finishRows(rows, frameCache: frameCache, messageLimit: messageLimit)
         }
 
         let containerCandidates = transcriptRoot.findAll(where: { element in
@@ -254,24 +252,22 @@ struct KakaoTalkTranscriptReader {
         }
 
         runner.log("t:   gather \(Int(Date().timeIntervalSince(c0) * 1000))ms raw=\(rows.count)")
-        return finishRows(rows, inputElement: inputElement, frameCache: frameCache, messageLimit: messageLimit)
+        return finishRows(rows, frameCache: frameCache, messageLimit: messageLimit)
     }
 
     private func finishRows(
         _ rows: [UIElement],
-        inputElement: UIElement,
         frameCache: FrameCache,
         messageLimit: Int
     ) -> [UIElement] {
         let c1 = Date()
         let deduplicated = deduplicateElements(rows)
-        var filtered = deduplicated
-        if let inputFrame = inputElement.frame {
-            filtered = deduplicated.filter { row in
-                guard let rowFrame = frameCache.frame(of: row) else { return true }
-                return rowFrame.maxY <= inputFrame.minY + 20
-            }
-        }
+        // No input-frame filter. Every AXRow under the transcript root is a message; the
+        // composer is a text area, not a row, so there was never anything here to exclude
+        // — and the filter was throwing away the newest messages, whose frames reach past
+        // the composer's top edge. That reads exactly like a conversation that has stopped
+        // updating, because the only messages it loses are the latest ones.
+        let filtered = deduplicated
 
         let sorted = filtered.sorted { lhs, rhs in
             let lhsY = frameCache.frame(of: lhs)?.minY ?? .greatestFiniteMagnitude
@@ -305,12 +301,14 @@ struct KakaoTalkTranscriptReader {
             analyzeRow($0, transcriptRoot: transcriptRoot, referenceDate: referenceDate, frameCache: frameCache)
         }
 
+        // Resolved before the loop, because a message's time comes from the stamp BELOW
+        // it and the loop only ever knows what came above.
+        let resolvedTimes = TranscriptTimes.fill(analyses.map(\.timeRaw))
+
         var messages: [TranscriptMessage] = []
         messages.reserveCapacity(min(analyses.count, limit * 2))
         var selectedLogs = 0
         var skippedLogs = 0
-        var lastKnownTime: String?
-        var lastTimeBySide: [MessageSide: String] = [:]
         var leftAnchorAuthor: String?
         var leftAnchorTimeRaw: String?
         var currentDateAnchor: Date?
@@ -385,18 +383,7 @@ struct KakaoTalkTranscriptReader {
             )
             let author = resolvedAuthor.author
 
-            let resolvedTime: String?
-            if let explicitTime = analysis.timeRaw {
-                resolvedTime = explicitTime
-                lastKnownTime = explicitTime
-                if side != .unknown {
-                    lastTimeBySide[side] = explicitTime
-                }
-            } else if side != .unknown, let sideTime = lastTimeBySide[side] {
-                resolvedTime = sideTime
-            } else {
-                resolvedTime = lastKnownTime
-            }
+            let resolvedTime = resolvedTimes[offset]
 
             let message = TranscriptMessage(
                 author: author,
