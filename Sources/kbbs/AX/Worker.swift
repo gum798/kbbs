@@ -350,20 +350,20 @@ final class AXWorker: @unchecked Sendable {
             return .openFailed(title: title, reason: "카카오톡이 앞으로 나오지 않았습니다")
         }
 
-        // 2. Coordinates, re-read now rather than trusting the ones from the scan: the
-        //    list may have scrolled in the time the user spent reading the warning.
+        // 2. Raise the list, then take coordinates. Bringing the app forward brings ALL
+        //    its windows, so a chat window sitting over the list takes the double-click
+        //    instead — which is how an earlier version closed an unrelated chat rather
+        //    than opening the one asked for. The frame is re-read after the raise, not
+        //    trusted from the scan.
         mailbox.deliver(.openingStep(title: title, step: 2), generation: currentGeneration)
-        let screens = NSScreen.screens.map { screen -> CGRect in
-            // NSScreen is bottom-left origin; AX frames and CGEvent are top-left.
-            let main = NSScreen.screens.first?.frame.height ?? screen.frame.height
-            return CGRect(
-                x: screen.frame.minX,
-                y: main - screen.frame.maxY,
-                width: screen.frame.width,
-                height: screen.frame.height
-            )
+        if let listWindow {
+            try? listWindow.performAction(kAXRaiseAction)
+            Thread.sleep(forTimeInterval: 0.2)
         }
-        guard let point = RowClickGuard.clickPoint(rowFrame: row.frame, visibleScreens: screens) else {
+        guard let point = RowClickGuard.clickPoint(
+            rowFrame: row.frame,
+            visibleScreens: OpenCommand.screensInEventSpace()
+        ) else {
             return .openFailed(title: title, reason: "행이 화면 밖이거나 가려져 있습니다")
         }
 
