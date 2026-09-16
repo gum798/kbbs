@@ -25,6 +25,8 @@ struct MessageContextResolver {
     }
 
     func resolve(in chatWindow: UIElement) -> MessageTranscriptContext? {
+        let r0 = Date()
+        defer { runner.log("t: resolveContext \(Int(Date().timeIntervalSince(r0) * 1000))ms") }
         guard let inputElement = resolveMessageInputField(chatWindow: chatWindow) else {
             runner.log("read: message input context unavailable")
             return nil
@@ -51,6 +53,8 @@ struct MessageContextResolver {
     }
 
     private func resolveMessageInputField(chatWindow: UIElement) -> UIElement? {
+        let i0 = Date()
+        defer { runner.log("t:   input \(Int(Date().timeIntervalSince(i0) * 1000))ms") }
         if let cachedInput = resolveCachedElement(
             slot: .messageInput,
             root: chatWindow,
@@ -130,6 +134,8 @@ struct MessageContextResolver {
     }
 
     private func resolveTranscriptRoot(chatWindow: UIElement, paneRoot: UIElement?, inputElement: UIElement) -> UIElement? {
+        let t0 = Date()
+        defer { runner.log("t:   transcriptRoot \(Int(Date().timeIntervalSince(t0) * 1000))ms") }
         let cacheRoot = paneRoot ?? chatWindow
         if let cachedTranscriptRoot = resolveCachedElement(
             slot: .transcriptRoot,
@@ -140,6 +146,16 @@ struct MessageContextResolver {
         ) {
             runner.log("read: transcript root cache hit")
             return cachedTranscriptRoot
+        }
+
+        // Shallow first, for the same reason the input search does it: KakaoTalk answers
+        // each Accessibility query in several milliseconds, so a 600-node breadth-first
+        // walk is four to seven SECONDS. The transcript container is a direct child of
+        // the window, and looking only there costs a few dozen queries.
+        if let quick = shallowTranscriptRoot(chatWindow: chatWindow, inputElement: inputElement) {
+            runner.log("read: transcript root shallow hit")
+            rememberCachedElement(slot: .transcriptRoot, root: cacheRoot, element: quick)
+            return quick
         }
 
         var candidates: [UIElement] = []
@@ -186,6 +202,33 @@ struct MessageContextResolver {
 
         rememberCachedElement(slot: .transcriptRoot, root: cacheRoot, element: transcriptRoot)
         return transcriptRoot
+    }
+
+    /// The transcript container, looked for only where it lives: the window's children
+    /// and theirs.
+    private func shallowTranscriptRoot(chatWindow: UIElement, inputElement: UIElement) -> UIElement? {
+        let roles: Set<String> = [kAXScrollAreaRole, kAXTableRole, kAXOutlineRole, kAXListRole]
+        var candidates: [UIElement] = []
+        for child in chatWindow.children.prefix(40) {
+            if let role = child.role, roles.contains(role) {
+                candidates.append(child)
+            }
+            guard child.role == kAXGroupRole || child.role == kAXScrollAreaRole else { continue }
+            for grandchild in child.children.prefix(12) {
+                if let role = grandchild.role, roles.contains(role) {
+                    candidates.append(grandchild)
+                }
+            }
+        }
+
+        let best = candidates
+            .map { ($0, scoreTranscriptContainerSpatial($0, chatWindow: chatWindow, inputElement: inputElement)) }
+            .filter { $0.1 > 0 }
+            .max { $0.1 < $1.1 }
+        guard let best, isLikelyTranscriptRoot(best.0, chatWindow: chatWindow, inputElement: inputElement) else {
+            return nil
+        }
+        return best.0
     }
 
     private func collectTranscriptContainers(from root: UIElement) -> [UIElement] {

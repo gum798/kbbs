@@ -35,6 +35,9 @@ lint-print: ## Fail if a deleted hazard is reintroduced
 		-e 'ensureWindowReopened' \
 		-e 'activateAndWaitForWindow' \
 		-e 'printHierarchy' \
+		-e 'pressEnterKey' \
+		-e 'CGEventCreateKeyboardEvent' \
+		-e 'keyboardEventSource' \
 		Sources/ \
 		|| (echo "^^ a hazard deleted on purpose has come back"; exit 1)
 	@! grep -nE 'UIElement|AXUIElement|KakaoTalkApp|ChatListScanner|RoomReader' \

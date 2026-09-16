@@ -21,6 +21,9 @@ struct Loop {
     /// How often the chat list is re-scanned while it is the screen you are looking at.
     private static let listPoll: TimeInterval = 15.0
     private static let windowWatch: TimeInterval = 1.0
+    /// Messages asked for per read. The screen holds twelve lines and a message can wrap,
+    /// so a few more than that is everything it can possibly show.
+    private static let roomReadLimit = RoomScreen.visibleLines + 4
 
     private enum Screen { case list, room, waiting, confirm, blocked }
 
@@ -54,6 +57,10 @@ struct Loop {
     private var roomToken: Int?
     private var ledger = PendingLedger()
     private var readFailures = 0
+    /// Sends that arrived while the worker was busy. Only sends queue — a poll that was
+    /// missed will come round again, but a message the user pressed Enter on must not be
+    /// silently dropped because a read happened to be running.
+    private var queuedSends: [AXJob] = []
     private var blocked: BlockedState?
     private var lastGoodRead: Date?
 
@@ -122,6 +129,7 @@ struct Loop {
             if case .openingStep = result {} else { axBusy = false }
             apply(result)
         }
+        dispatchQueued()
     }
 
     private mutating func apply(_ result: AXResult) {
@@ -148,7 +156,7 @@ struct Loop {
             nextWindowWatch = nil
             nextListPoll = nil
             lastFrame = []
-            submit(.readRoom(token: token, title: title, limit: readLimit))
+            submit(.readRoom(token: token, title: title, limit: Self.roomReadLimit))
 
         case .read(let token, let snapshot, let elapsed):
             guard roomToken == token, var room = roomState else { break }
@@ -247,9 +255,19 @@ struct Loop {
     }
 
     private mutating func submit(_ job: AXJob) {
-        guard let worker, !axBusy else { return }
+        guard let worker else { return }
+        guard !axBusy else {
+            if case .send = job { queuedSends.append(job) }
+            return
+        }
         axBusy = true
         worker.submit(job, generation: generation)
+    }
+
+    /// Queued sends go before anything the timers want.
+    private mutating func dispatchQueued() {
+        guard !axBusy, !queuedSends.isEmpty else { return }
+        submit(queuedSends.removeFirst())
     }
 
     /// The user changed their mind. Anything in flight still runs to completion on the
@@ -324,24 +342,27 @@ struct Loop {
         switch key {
         case .control("c"):
             return .quit
-        case .char("q"), .char("Q") where composerEmpty:
+        // The guard has to be repeated: `where` binds only to the pattern it follows, so
+        // the single-clause form let a lowercase q quit mid-sentence and take the message
+        // with it.
+        case .char("q") where composerEmpty, .char("Q") where composerEmpty:
             return .quit
         case .escape:
             leaveRoom()
             return .carryOn
         case .control("l"):
             lastFrame = []
-        case .char("r"), .char("R") where composerEmpty:
+        case .char("r") where composerEmpty, .char("R") where composerEmpty:
             if let token = roomToken {
                 room.note = "읽는 중…"
                 roomState = room
-                submit(.readRoom(token: token, title: room.title, limit: readLimit))
+                submit(.readRoom(token: token, title: room.title, limit: Self.roomReadLimit))
             }
             return .carryOn
         case .backspace:
             if !room.composer.isEmpty { room.composer.removeLast() }
         case .enter:
-            if !room.composer.isEmpty, let token = roomToken, !axBusy {
+            if !room.composer.isEmpty, let token = roomToken {
                 let body = room.composer
                 room.composer = ""
                 ledger.add(body: body, transcript: room.messages)
@@ -417,7 +438,7 @@ struct Loop {
             return .quit
         case .char("r"), .char("R"):
             if let token = roomToken, let title = roomState?.title, !axBusy {
-                submit(.readRoom(token: token, title: title, limit: readLimit))
+                submit(.readRoom(token: token, title: title, limit: Self.roomReadLimit))
             }
         case .escape:
             blocked = nil
@@ -477,6 +498,7 @@ struct Loop {
 
     private mutating func leaveRoom() {
         ledger = PendingLedger()
+        queuedSends.removeAll()
         if let token = roomToken { worker?.release(token: token) }
         roomToken = nil
         roomState = nil
@@ -499,7 +521,7 @@ struct Loop {
             return
         }
         say("읽는 중…")
-        submit(.scanList(limit: readLimit))
+        submit(.scanList(limit: Self.roomReadLimit))
     }
 
     // MARK: - Timers
@@ -509,12 +531,12 @@ struct Loop {
 
         if (screen == .room || screen == .blocked), let due = nextRoomPoll, now >= due, !axBusy, let token = roomToken,
            let title = roomState?.title {
-            submit(.readRoom(token: token, title: title, limit: readLimit))
+            submit(.readRoom(token: token, title: title, limit: Self.roomReadLimit))
             nextRoomPoll = now.addingTimeInterval(Self.roomPoll)
         }
 
         if screen == .list, let due = nextListPoll, now >= due, !axBusy, worker != nil {
-            submit(.scanList(limit: readLimit))
+            submit(.scanList(limit: Self.roomReadLimit))
             nextListPoll = now.addingTimeInterval(Self.listPoll)
         }
 

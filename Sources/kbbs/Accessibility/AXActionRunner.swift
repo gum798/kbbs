@@ -41,95 +41,6 @@ struct AXActionRunner {
         return evaluateAfterTimeout ? condition() : false
     }
 
-    @discardableResult
-    func focusWithVerification(
-        _ element: UIElement,
-        label: String,
-        attempts: Int = 3,
-        retryDelay: TimeInterval = 0.08
-    ) -> Bool {
-        for attempt in 1...max(attempts, 1) {
-            do {
-                try element.focus()
-            } catch {
-                log("\(label): focus attempt \(attempt) failed (\(error))")
-            }
-
-            if element.isFocused || waitUntil(label: "\(label) focused", timeout: 0.25, condition: {
-                element.isFocused
-            }) {
-                log("\(label): focused on attempt \(attempt)")
-                return true
-            }
-
-            do {
-                try element.press()
-            } catch {
-                log("\(label): press fallback \(attempt) failed (\(error))")
-            }
-
-            if element.isFocused || waitUntil(label: "\(label) focused", timeout: 0.25, condition: {
-                element.isFocused
-            }) {
-                log("\(label): focused by press fallback on attempt \(attempt)")
-                return true
-            }
-
-            Thread.sleep(forTimeInterval: retryDelay)
-        }
-
-        log("\(label): focus verification failed")
-        return false
-    }
-
-    @discardableResult
-    func setTextWithVerification(
-        _ text: String,
-        on element: UIElement,
-        label: String,
-        attempts: Int = 2,
-        retryDelay: TimeInterval = 0.08
-    ) -> Bool {
-        for attempt in 1...max(attempts, 1) {
-            do {
-                try element.setAttribute(kAXValueAttribute, value: text as CFString)
-            } catch {
-                log("\(label): set AXValue attempt \(attempt) failed (\(error))")
-                Thread.sleep(forTimeInterval: retryDelay)
-                continue
-            }
-
-            let reflected = waitUntil(label: "\(label) AXValue reflected", timeout: 0.3, condition: {
-                isInputReflected(expected: text, current: element.stringValue)
-            })
-            if reflected {
-                log("\(label): set AXValue succeeded on attempt \(attempt)")
-                return true
-            }
-
-            Thread.sleep(forTimeInterval: retryDelay)
-        }
-
-        log("\(label): set AXValue verification failed")
-        return false
-    }
-
-    func pressEnterKey() {
-        pressKey(code: 36)
-    }
-
-    private func pressKey(code: CGKeyCode, flags: CGEventFlags = []) {
-        let source = CGEventSource(stateID: .hidSystemState)
-        if let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true) {
-            down.flags = flags
-            down.post(tap: .cghidEventTap)
-        }
-        if let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) {
-            up.flags = flags
-            up.post(tap: .cghidEventTap)
-        }
-    }
-
     /// Post a left-button double-click at the given screen point.
     /// KakaoTalk's search/chat-list rows expose only AXShowDefaultUI/AXShowAlternateUI and
     /// ignore both AXPress and keyboard Enter, so a hardware-level double-click is the only
@@ -172,18 +83,5 @@ struct AXActionRunner {
                 mouseButton: .left
             )?.post(tap: .cghidEventTap)
         }
-    }
-
-    private func isInputReflected(expected: String, current: String?) -> Bool {
-        guard let current else { return false }
-        return current == expected || current.contains(expected)
-    }
-
-    private func didEnterEffect(before: String, after: String) -> Bool {
-        let trimmedAfter = after.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !before.isEmpty && trimmedAfter.isEmpty {
-            return true
-        }
-        return after != before
     }
 }

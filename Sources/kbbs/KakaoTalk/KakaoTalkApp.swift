@@ -20,11 +20,6 @@ public final class KakaoTalkApp: Sendable {
 
     // MARK: - App State
 
-    /// Check if KakaoTalk is currently running
-    public static var isRunning: Bool {
-        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty
-    }
-
     /// Get the running KakaoTalk application
     public static var runningApplication: NSRunningApplication? {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first
@@ -76,12 +71,6 @@ public final class KakaoTalkApp: Sendable {
     /// Find a window containing the given title substring
     public func findWindow(titleContaining substring: String) -> UIElement? {
         windows.first { $0.title?.contains(substring) == true }
-    }
-
-    /// Get the friends list window
-    public var friendsWindow: UIElement? {
-        // The main KakaoTalk window typically shows the user's name or "친구" in the title
-        mainWindow ?? windows.first
     }
 
     /// Get the chat list window

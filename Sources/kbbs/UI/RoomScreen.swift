@@ -50,6 +50,11 @@ enum RoomScreen {
     private static let rowTitle = 1
     private static let rowEndOfTape = 3
     private static let transcriptRows = 4...15
+
+    /// Lines of conversation the screen can hold. The reader is asked for messages in
+    /// proportion to this and nothing more — reading sixty to draw twelve is where the
+    /// seconds went.
+    static var visibleLines: Int { transcriptRows.count }
     private static let rowNotice = 17
     private static let rowComposer = 20
     private static let rowHotkeys = 22

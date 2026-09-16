@@ -167,16 +167,20 @@ struct KakaoTalkTranscriptReader {
     ) throws -> TranscriptSnapshot {
 
         let frameCache = FrameCache()
+        let t0 = Date()
         let messageRows = collectTranscriptRows(
             from: context.transcriptRoot,
             inputElement: context.inputElement,
             messageLimit: limit,
             frameCache: frameCache
         )
+        runner.log("t: collectRows \(Int(Date().timeIntervalSince(t0) * 1000))ms rows=\(messageRows.count)")
         guard !messageRows.isEmpty else {
             throw TranscriptReadError.noMessageRows
         }
+        let t1 = Date()
 
+        defer { runner.log("t: extractMessages \(Int(Date().timeIntervalSince(t1) * 1000))ms") }
         let displayMessages = extractMessages(
             from: messageRows,
             transcriptRoot: context.transcriptRoot,
@@ -202,10 +206,29 @@ struct KakaoTalkTranscriptReader {
         messageLimit: Int,
         frameCache: FrameCache
     ) -> [UIElement] {
-        let targetRowCount = max(messageLimit * 4, 50)
+        // Two rows per wanted message, not four, and a floor of a dozen rather than
+        // fifty: the caller asks for what its screen can hold, and every extra row is a
+        // handful of Accessibility round trips, which is what the read time is made of.
+        let targetRowCount = max(messageLimit * 2, 12)
         var rows: [UIElement] = []
 
+        let c0 = Date()
         rows.append(contentsOf: directRowChildren(from: transcriptRoot))
+
+        // The rows usually sit one level down, in a table inside the scroll area. Looking
+        // there directly costs a few queries; the breadth-first sweep below costs
+        // hundreds, and at KakaoTalk's several-milliseconds-per-query that is seconds.
+        if rows.isEmpty {
+            for child in transcriptRoot.children.prefix(12) {
+                let role = child.role ?? ""
+                guard role == kAXTableRole || role == kAXOutlineRole || role == kAXListRole else { continue }
+                rows.append(contentsOf: directRowChildren(from: child))
+            }
+        }
+
+        guard rows.count < targetRowCount else {
+            return finishRows(rows, inputElement: inputElement, frameCache: frameCache, messageLimit: messageLimit)
+        }
 
         let containerCandidates = transcriptRoot.findAll(where: { element in
             guard let role = element.role else { return false }
@@ -219,17 +242,28 @@ struct KakaoTalkTranscriptReader {
         if rows.count < targetRowCount {
             let bfsRows = transcriptRoot.findAll(
                 role: kAXRowRole,
-                limit: max(targetRowCount * 3, 240),
+                limit: max(targetRowCount * 2, 30),
                 maxNodes: 3_000
             )
             rows.append(contentsOf: bfsRows)
         }
 
         if rows.isEmpty {
-            let cells = transcriptRoot.findAll(role: kAXCellRole, limit: max(targetRowCount * 2, 160), maxNodes: 2_000)
+            let cells = transcriptRoot.findAll(role: kAXCellRole, limit: max(targetRowCount * 2, 24), maxNodes: 2_000)
             rows.append(contentsOf: cells.compactMap(\.parent))
         }
 
+        runner.log("t:   gather \(Int(Date().timeIntervalSince(c0) * 1000))ms raw=\(rows.count)")
+        return finishRows(rows, inputElement: inputElement, frameCache: frameCache, messageLimit: messageLimit)
+    }
+
+    private func finishRows(
+        _ rows: [UIElement],
+        inputElement: UIElement,
+        frameCache: FrameCache,
+        messageLimit: Int
+    ) -> [UIElement] {
+        let c1 = Date()
         let deduplicated = deduplicateElements(rows)
         var filtered = deduplicated
         if let inputFrame = inputElement.frame {
@@ -250,7 +284,8 @@ struct KakaoTalkTranscriptReader {
             return lhsY < rhsY
         }
 
-        let recentWindow = max(messageLimit * 6, 80)
+        runner.log("t:   dedupe+frames+sort \(Int(Date().timeIntervalSince(c1) * 1000))ms")
+        let recentWindow = max(messageLimit * 2, 16)
         let recentRows = Array(sorted.suffix(recentWindow))
         runner.log("read: transcript rows raw=\(rows.count), unique=\(deduplicated.count), filtered=\(sorted.count), recent=\(recentRows.count)")
         return recentRows
@@ -264,7 +299,7 @@ struct KakaoTalkTranscriptReader {
         referenceDate: Date,
         frameCache: FrameCache
     ) -> [TranscriptMessage] {
-        let analysisBudget = max(limit * 5, 60)
+        let analysisBudget = max(limit * 2, 20)
         let rowsToAnalyze = Array(rows.suffix(analysisBudget))
         let analyses = rowsToAnalyze.map {
             analyzeRow($0, transcriptRoot: transcriptRoot, referenceDate: referenceDate, frameCache: frameCache)
@@ -572,8 +607,8 @@ struct KakaoTalkTranscriptReader {
 
     private func extractFallbackMessages(from transcriptRoot: UIElement, limit: Int, referenceDate: Date) -> [TranscriptMessage] {
         var messages: [TranscriptMessage] = []
-        let textAreas = transcriptRoot.findAll(role: kAXTextAreaRole, limit: max(limit * 80, 1_200), maxNodes: 6_000)
-        let recentTextAreas = Array(sortElementsByReadingOrder(textAreas).suffix(max(limit * 20, 240)))
+        let textAreas = transcriptRoot.findAll(role: kAXTextAreaRole, limit: max(limit * 8, 120), maxNodes: 2_000)
+        let recentTextAreas = Array(sortElementsByReadingOrder(textAreas).suffix(max(limit * 3, 40)))
         for textArea in recentTextAreas {
             let normalized = normalizeBodyText(textArea.stringValue)
             guard !normalized.isEmpty else { continue }
@@ -608,8 +643,8 @@ struct KakaoTalkTranscriptReader {
         }
 
         if messages.isEmpty {
-            let links = transcriptRoot.findAll(where: { $0.role == kAXLinkRole }, limit: max(limit * 40, 320), maxNodes: 4_000)
-            let recentLinks = Array(sortElementsByReadingOrder(links).suffix(max(limit * 10, 80)))
+            let links = transcriptRoot.findAll(where: { $0.role == kAXLinkRole }, limit: max(limit * 4, 40), maxNodes: 1_500)
+            let recentLinks = Array(sortElementsByReadingOrder(links).suffix(max(limit * 2, 20)))
             for link in recentLinks {
                 let title = normalizeBodyText(link.title ?? link.stringValue)
                 if !title.isEmpty {
