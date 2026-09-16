@@ -22,7 +22,7 @@ struct Loop {
     private static let listPoll: TimeInterval = 15.0
     private static let windowWatch: TimeInterval = 1.0
 
-    private enum Screen { case list, room, waiting, confirm }
+    private enum Screen { case list, room, waiting, confirm, blocked }
 
     private struct WaitingState {
         let title: String
@@ -54,6 +54,8 @@ struct Loop {
     private var roomToken: Int?
     private var ledger = PendingLedger()
     private var readFailures = 0
+    private var blocked: BlockedState?
+    private var lastGoodRead: Date?
 
     private let worker: AXWorker?
     private let readLimit: Int
@@ -151,6 +153,12 @@ struct Loop {
         case .read(let token, let snapshot, let elapsed):
             guard roomToken == token, var room = roomState else { break }
             readFailures = 0
+            lastGoodRead = Date()
+            if screen == .blocked {
+                blocked = nil
+                screen = .room
+                lastFrame = []
+            }
             room.messages = snapshot.messages
             ledger.reconcile(against: snapshot.messages)
             room.pending = ledger.entries
@@ -201,6 +209,25 @@ struct Loop {
         case .failed(let reason):
             readFailures += 1
             let wait = Backoff.interval(afterFailures: readFailures) ?? Self.roomPoll
+
+            // Three in a row is no longer a hiccup. Saying so on its own screen is the
+            // difference between a quiet chat and a dead one, which a status line cannot
+            // carry for a program left open for hours.
+            if readFailures >= 3 {
+                blocked = BlockedState(
+                    reason: reason,
+                    since: blocked?.since ?? Date(),
+                    lastGoodRead: lastGoodRead,
+                    retryIn: wait,
+                    clock: Date(),
+                    permissionLost: !AccessibilityPermission.isGranted()
+                )
+                screen = .blocked
+                nextRoomPoll = Date().addingTimeInterval(wait)
+                lastFrame = []
+                break
+            }
+
             switch screen {
             case .room:
                 roomState?.link = .down(since: Date(), reason: reason)
@@ -212,6 +239,8 @@ struct Loop {
                 nextListPoll = Date().addingTimeInterval(wait)
             case .waiting:
                 nextWindowWatch = Date().addingTimeInterval(Self.windowWatch)
+            case .blocked:
+                break
             }
             noteSetAt = Date()
         }
@@ -240,6 +269,7 @@ struct Loop {
         case .room: return handleRoom(key)
         case .waiting: return handleWaiting(key)
         case .confirm: return handleConfirm(key)
+        case .blocked: return handleBlocked(key)
         }
     }
 
@@ -381,6 +411,26 @@ struct Loop {
         lastFrame = []
     }
 
+    private mutating func handleBlocked(_ key: Key) -> Outcome {
+        switch key {
+        case .char("q"), .char("Q"), .control("c"):
+            return .quit
+        case .char("r"), .char("R"):
+            if let token = roomToken, let title = roomState?.title, !axBusy {
+                submit(.readRoom(token: token, title: title, limit: readLimit))
+            }
+        case .escape:
+            blocked = nil
+            readFailures = 0
+            leaveRoom()
+        case .control("l"):
+            lastFrame = []
+        default:
+            break
+        }
+        return .carryOn
+    }
+
     private mutating func handleWaiting(_ key: Key) -> Outcome {
         switch key {
         case .char("q"), .char("Q"), .control("c"):
@@ -457,7 +507,7 @@ struct Loop {
     private mutating func serviceTimers() {
         let now = Date()
 
-        if screen == .room, let due = nextRoomPoll, now >= due, !axBusy, let token = roomToken,
+        if (screen == .room || screen == .blocked), let due = nextRoomPoll, now >= due, !axBusy, let token = roomToken,
            let title = roomState?.title {
             submit(.readRoom(token: token, title: title, limit: readLimit))
             nextRoomPoll = now.addingTimeInterval(Self.roomPoll)
@@ -494,7 +544,7 @@ struct Loop {
         case .room:
             roomState?.note = text
             roomState?.link = tier == .stuck ? down : slow
-        case .waiting:
+        case .waiting, .blocked:
             break
         }
         noteSetAt = Date()
@@ -504,7 +554,7 @@ struct Loop {
         switch screen {
         case .list, .confirm: list.note = note
         case .room: roomState?.note = note
-        case .waiting: break
+        case .waiting, .blocked: break
         }
         noteSetAt = Date()
     }
@@ -526,6 +576,7 @@ struct Loop {
         let now = Date()
         list.clock = now
         roomState?.clock = now
+        blocked?.clock = now
     }
 
     // MARK: - Painting
@@ -540,6 +591,9 @@ struct Loop {
             case .list, .confirm: rows = ListScreen.render(list).render()
             case .room: rows = RoomScreen.render(roomState ?? RoomState(title: "")).render()
             case .waiting: rows = waitingFrame()
+            case .blocked: rows = BlockedScreen.render(blocked ?? BlockedState(
+                reason: "읽기 실패", since: Date(), lastGoodRead: lastGoodRead, retryIn: 0, clock: Date()
+            )).render()
             }
         }
         guard rows != lastFrame else { return }

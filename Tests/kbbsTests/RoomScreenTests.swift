@@ -215,4 +215,13 @@ final class RoomScreenTests: XCTestCase {
         XCTAssertTrue(rows.contains { $0.contains("21:03") })
     }
 
+    /// 80 cells is not enough on its own — a row nobody filled in is 80 spaces and passes
+    /// the width check while leaving a hole in the side of the box.
+    func testEveryRowIsInsideTheBox() {
+        for (i, row) in plain(RoomScreen.render(state([message("안녕", author: "김민수")])).render()).enumerated() {
+            XCTAssertTrue("║╔╠╚".contains(row.first ?? " "), "row \(i) has no left border: \(row)")
+            XCTAssertTrue("║╗╣╝".contains(row.last ?? " "), "row \(i) has no right border: \(row)")
+        }
+    }
+
 }

@@ -376,4 +376,13 @@ extension ListScreenTests {
         XCTAssertFalse(rows[19].contains("열린 창"), rows[19])
     }
 
+    /// 80 cells is not enough on its own — a row nobody filled in is 80 spaces and passes
+    /// the width check while leaving a hole in the side of the box.
+    func testEveryRowIsInsideTheBox() {
+        for (i, row) in plain(ListScreen.render(state(27)).render()).enumerated() {
+            XCTAssertTrue("║╔╠╚".contains(row.first ?? " "), "row \(i) has no left border: \(row)")
+            XCTAssertTrue("║╗╣╝".contains(row.last ?? " "), "row \(i) has no right border: \(row)")
+        }
+    }
+
 }
