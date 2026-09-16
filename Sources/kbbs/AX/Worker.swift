@@ -341,29 +341,6 @@ final class AXWorker: @unchecked Sendable {
     private func openWindow(titled title: String) -> AXResult {
         func log(_ line: String) { TTYOut.log("[open] \(line)") }
         log("요청 「\(title)」 보유행=\(rows.count) 목록창=\(listWindow == nil ? "없음" : "있음")")
-        // The list reorders whenever a message arrives, and the table REUSES its row
-        // views — so a handle kept from an earlier scan can now be showing a different
-        // conversation entirely, and clicking it opens that one. Every open therefore
-        // checks the row still says what it said, and re-scans when it does not.
-        if rows[title] == nil || !Self.row(rows[title]!, stillShows: title) {
-            log("행 재스캔 (없거나 낡음)")
-            if let listWindow {
-                let found = scanner.scan(in: listWindow, limit: 60, trace: nil)
-                rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
-                log("재스캔 결과 \(found.count)개")
-            } else {
-                log("목록 창이 없어 재스캔 불가")
-            }
-        }
-        guard let row = rows[title] else {
-            log("실패: 행 없음")
-            return .openFailed(title: title, reason: "목록에서 그 행을 찾지 못했습니다")
-        }
-        guard Self.row(row, stillShows: title) else {
-            log("실패: 행이 다른 방을 표시함")
-            return .openFailed(title: title, reason: "목록이 바뀌었습니다. R 로 새로고침하세요")
-        }
-
         let terminal = SystemFocusProbe.frontmostPID()
         // Put KakaoTalk back the way it was found: the list is raised only so the click
         // can land on it, and leaving it sitting over the user's screen afterwards is the
@@ -392,6 +369,19 @@ final class AXWorker: @unchecked Sendable {
                 rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
                 log("복원 후 재스캔 \(found.count)개")
             }
+        }
+
+        // Bound only now. A row handle captured while the list was minimized reports no
+        // frame at all, and the coordinate guard then refuses a click it should have been
+        // able to make — the list reorders on every message, so the handle has to come
+        // from the scan that just ran, not from whatever was held before.
+        guard let row = rows[title] else {
+            log("실패: 행 없음")
+            return .openFailed(title: title, reason: "목록에서 그 방을 찾지 못했습니다")
+        }
+        guard Self.row(row, stillShows: title) else {
+            log("실패: 행이 다른 방을 표시함")
+            return .openFailed(title: title, reason: "목록이 바뀌었습니다. R 로 새로고침하세요")
         }
 
         // 1. Front. KakaoTalk has to be frontmost for a click to reach it.
