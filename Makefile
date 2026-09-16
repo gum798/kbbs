@@ -8,7 +8,7 @@
 BIN := $(HOME)/bin/kbbs
 BUMP := scripts/headatever.sh
 
-.PHONY: build test install lint-print version release release-major release-push
+.PHONY: build test install lint-print version release release-major release-push sync-tap
 
 build: ## Debug build
 	@swift build
@@ -56,3 +56,6 @@ release-major: ## Head release: head+1, date=today, patch=0
 
 release-push: ## Patch release, then push commit + tag
 	@$(BUMP) patch --push
+
+sync-tap: ## Sync Homebrew tap Formula with current VERSION
+	@scripts/sync-tap.sh

@@ -56,7 +56,9 @@ struct Loop {
     /// what keeps the queue from filling with reads nobody is waiting for any more.
     private var axBusy = false
     private var roomToken: Int?
-    private var ledger = PendingLedger()
+    /// One per room, kept when the user leaves. A send in flight does not stop because
+    /// they pressed Esc, so its [전송중] has to be there when they come back.
+    private var ledgers: [String: PendingLedger] = [:]
     private var readFailures = 0
     /// Sends that arrived while the worker was busy. Only sends queue — a poll that was
     /// missed will come round again, but a message the user pressed Enter on must not be
@@ -149,6 +151,7 @@ struct Loop {
             var state = RoomState(title: title)
             state.matchedWindowTitle = matched
             state.link = .live(lastRefresh: Date())
+            state.pending = ledgers[title]?.entries ?? []
             state.note = "읽는 중…"
             roomState = state
             waiting = nil
@@ -174,8 +177,8 @@ struct Loop {
                 carried: room.newCount
             )
             room.messages = snapshot.messages
-            ledger.reconcile(against: snapshot.messages)
-            room.pending = ledger.entries
+            ledgers[room.title, default: PendingLedger()].reconcile(against: snapshot.messages)
+            room.pending = ledgers[room.title]?.entries ?? []
             room.link = .live(lastRefresh: Date())
             room.pollSeconds = Self.roomPoll
             if room.note?.hasPrefix("읽는 중") == true || room.note?.hasPrefix("열기") == true {
@@ -206,7 +209,8 @@ struct Loop {
 
         case .sent(_, let cleared):
             if !cleared {
-                roomState?.note = "입력창에 남아 있습니다. 다시 보내지 마세요."
+                let warning = "입력창에 남아 있습니다. 다시 보내지 마세요."
+                if roomState != nil { roomState?.note = warning } else { say(warning) }
                 noteSetAt = Date()
             }
             nextRoomPoll = Date().addingTimeInterval(1.0)
@@ -223,14 +227,17 @@ struct Loop {
             }
 
         case .sendRefused(let body, let reason):
-            // Every refusal happens before the press, so nothing was sent — the text is
-            // handed back to the composer rather than lost.
-            ledger.dropLast(body: body)
+            // Every refusal happens before the press, so nothing was sent. The text goes
+            // back to the composer if the user is still here; if they have left, the note
+            // reaches them on the list instead of vanishing with the room.
             if var room = roomState {
-                room.pending = ledger.entries
+                ledgers[room.title, default: PendingLedger()].dropLast(body: body)
+                room.pending = ledgers[room.title]?.entries ?? []
                 if room.composer.isEmpty { room.composer = body }
                 room.note = "보내지 않았습니다: \(reason)"
                 roomState = room
+            } else {
+                say("보내지 않았습니다: \(reason)")
             }
             noteSetAt = Date()
 
@@ -409,8 +416,8 @@ struct Loop {
             if !room.composer.isEmpty, let token = roomToken {
                 let body = room.composer
                 room.composer = ""
-                ledger.add(body: body, transcript: room.messages)
-                room.pending = ledger.entries
+                ledgers[room.title, default: PendingLedger()].add(body: body, transcript: room.messages)
+                room.pending = ledgers[room.title]?.entries ?? []
                 roomState = room
                 submit(.send(token: token, body: body))
                 return .carryOn
@@ -538,8 +545,6 @@ struct Loop {
     }
 
     private mutating func leaveRoom() {
-        ledger = PendingLedger()
-        queuedSends.removeAll()
         if let token = roomToken { worker?.release(token: token) }
         roomToken = nil
         roomState = nil

@@ -115,4 +115,30 @@ final class WorkerTests: XCTestCase {
         XCTAssertGreaterThan(elapsed, 3.5)
         XCTAssertLessThan(elapsed, 5)
     }
+    // MARK: - Results that must not be abandoned
+
+    /// Leaving a room bumps the generation so a read in flight is thrown away. A SEND in
+    /// flight is different: it has already gone out, or it has already failed, and either
+    /// way the user has to be told. Dropping it means a message left the machine and
+    /// nothing on screen ever said so.
+    func testASendOutcomeSurvivesTheUserChangingTheirMind() {
+        let box = Mailbox()
+        box.deliver(.sent(body: "안녕", composerCleared: true), generation: 3, sticky: true)
+        XCTAssertEqual(box.drain(currentGeneration: 9).count, 1)
+    }
+
+    func testARefusalAlsoSurvives() {
+        let box = Mailbox()
+        box.deliver(.sendRefused(body: "안녕", reason: "입력창에 글자"), generation: 3, sticky: true)
+        XCTAssertEqual(box.drain(currentGeneration: 9).count, 1)
+    }
+
+    /// Everything else still goes: a transcript read for a room the user has left is not
+    /// worth showing in the room they are in now.
+    func testAnOrdinaryResultIsStillAbandoned() {
+        let box = Mailbox()
+        box.deliver(.failed(reason: "읽기"), generation: 3)
+        XCTAssertTrue(box.drain(currentGeneration: 9).isEmpty)
+    }
+
 }

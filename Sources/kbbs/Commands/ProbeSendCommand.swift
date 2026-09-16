@@ -26,6 +26,9 @@ struct ProbeSendCommand: ParsableCommand {
     @Flag(name: .long, help: "창을 최소화한 뒤에도 읽히는지 본다 (원래 상태로 되돌린다)")
     var minimized = false
 
+    @Flag(name: .long, help: "앱을 통째로 숨긴 뒤에도 읽히는지 본다 (원래대로 되돌린다)")
+    var hidden = false
+
     @Flag(name: .long, help: "위로 스크롤한 뒤에도 새 메시지가 보이는지 본다")
     var scrolled = false
 
@@ -53,6 +56,38 @@ struct ProbeSendCommand: ParsableCommand {
             print("입력창을 찾지 못했습니다.")
             throw ExitCode.failure
         }
+        if hidden {
+            let reader = KakaoTalkTranscriptReader(kakao: kakao, runner: runner, interactionMode: .backgroundSafe)
+            func read() -> Int {
+                (try? reader.readSnapshot(from: context, chatWindow: window, fallbackChatTitle: room, limit: 12).count) ?? -1
+            }
+            print("숨기기 전   \(read())개")
+
+            let app = KakaoTalkApp.runningApplication
+            let wasHidden = app?.isHidden ?? false
+            app?.hide()
+            Thread.sleep(forTimeInterval: 1.0)
+            print("숨김 상태   isHidden=\(app?.isHidden ?? false)")
+            print("숨긴 뒤     \(read())개")
+            print("창 목록     " + kakao.windows.compactMap { $0.title }.map { "「\($0)」" }.joined(separator: " "))
+
+            // 새 메시지가 숨긴 동안에도 들어오는지가 진짜 질문이다.
+            if (context.inputElement.stringValue ?? "").isEmpty {
+                let stamp = "kbbs 숨김 확인 \(Int(Date().timeIntervalSince1970) % 10000)"
+                _ = try? Sender(trace: trace).send(stamp, window: window, context: context)
+                Thread.sleep(forTimeInterval: 2.5)
+                let seen = ((try? reader.readSnapshot(from: context, chatWindow: window, fallbackChatTitle: room, limit: 12))?
+                    .messages.map(\.body).contains { $0.contains(stamp) }) ?? false
+                print("숨긴 중 도착  \(seen ? "보임" : "안 보임")")
+            }
+
+            if !wasHidden {
+                app?.unhide()
+                print("원래대로 되돌렸습니다.")
+            }
+            return
+        }
+
         if scrolled {
             try probeScrolled(kakao: kakao, window: window, context: context, runner: runner)
             return

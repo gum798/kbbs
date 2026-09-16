@@ -43,32 +43,29 @@ struct OpenCommand: ParsableCommand {
             throw ExitCode.failure
         }
 
-        let items = ChatListScanner().scan(in: listWindow, limit: 60, trace: nil)
+        let terminal = SystemFocusProbe.frontmostPID()
+        defer {
+            try? listWindow.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
+            if let terminal { SystemFocusProbe.activate(pid: terminal) }
+        }
+        // Scanned only after the window is back and redrawn. Rows read while the list was
+        // minimized carry frames from wherever it used to be, and the identity check then
+        // rejects every one of them.
+        let items = ListWindowRestore.rowsAfterRestoring(
+            listWindow: listWindow,
+            scanner: ChatListScanner(),
+            limit: 60
+        ) { print("  \($0)") }
         print("목록 스캔      \(items.count)개")
         guard let row = items.first(where: { $0.discovery.title == room })?.element else {
             print("「\(room)」 행이 목록에 없습니다.")
-            print("보이는 이름: " + items.prefix(8).map { "「\($0.discovery.title)」" }.joined(separator: " ") + " …")
             throw ExitCode.failure
         }
-
-        let frame = row.frame
-        print("행 프레임      \(frame.map { "x=\(Int($0.minX)) y=\(Int($0.minY)) w=\(Int($0.width)) h=\(Int($0.height))" } ?? "읽지 못함")")
+        guard AXWorker.row(row, stillShows: room) else {
+            print("행 확인       그 행은 이제 다른 방입니다 (목록이 바뀌었습니다)")
+            throw ExitCode.failure
+        }
         let screens = Self.screensInEventSpace()
-        print("화면           " + screens.map { "\(Int($0.width))x\(Int($0.height))@\(Int($0.minX)),\(Int($0.minY))" }.joined(separator: " "))
-
-        guard RowClickGuard.clickPoint(rowFrame: frame, visibleScreens: screens) != nil else {
-            print("좌표 거부      행이 화면 밖이거나 크기가 없습니다")
-            throw ExitCode.failure
-        }
-
-        if dryRun {
-            print("")
-            print("dry-run — 누르지 않았습니다.")
-            return
-        }
-
-        let terminal = SystemFocusProbe.frontmostPID()
-        defer { if let terminal { SystemFocusProbe.activate(pid: terminal) } }
 
         print("전환 전 최전면 pid=\(terminal.map(String.init) ?? "모름")")
         let front: Bool

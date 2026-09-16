@@ -43,14 +43,17 @@ final class Mailbox: @unchecked Sendable {
     private struct Stamped {
         let result: AXResult
         let generation: Int
+        /// Survives a generation bump. A send has already happened by the time its result
+        /// exists, so abandoning it would leave a message sent and nothing saying so.
+        let sticky: Bool
     }
 
     private let lock = NSLock()
     private var items: [Stamped] = []
 
-    func deliver(_ result: AXResult, generation: Int) {
+    func deliver(_ result: AXResult, generation: Int, sticky: Bool = false) {
         lock.lock()
-        items.append(Stamped(result: result, generation: generation))
+        items.append(Stamped(result: result, generation: generation, sticky: sticky))
         lock.unlock()
     }
 
@@ -67,7 +70,7 @@ final class Mailbox: @unchecked Sendable {
         let taken = items
         items.removeAll()
         lock.unlock()
-        return taken.filter { $0.generation == currentGeneration }.map(\.result)
+        return taken.filter { $0.sticky || $0.generation == currentGeneration }.map(\.result)
     }
 }
 
@@ -208,7 +211,15 @@ final class AXWorker: @unchecked Sendable {
             let started = Date()
             let result = perform(job, started: started)
             watchdog.finished()
-            mailbox.deliver(result, generation: generation)
+            mailbox.deliver(result, generation: generation, sticky: Self.mustBeHeard(result))
+        }
+    }
+
+    /// A result the user has to be told about whatever else they have done since.
+    private static func mustBeHeard(_ result: AXResult) -> Bool {
+        switch result {
+        case .sent, .sendRefused: return true
+        default: return false
         }
     }
 
@@ -352,8 +363,33 @@ final class AXWorker: @unchecked Sendable {
         }
 
         let terminal = SystemFocusProbe.frontmostPID()
+        // Put KakaoTalk back the way it was found: the list is raised only so the click
+        // can land on it, and leaving it sitting over the user's screen afterwards is the
+        // part they notice. Hiding the whole app does not work — NSRunningApplication.hide
+        // on another process returns without hiding anything — so the list window is
+        // minimized, which does.
         defer {
+            if let listWindow {
+                try? listWindow.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
+                log("목록 창 최소화")
+            }
             if let terminal { SystemFocusProbe.activate(pid: terminal) }
+        }
+
+        // It may have been minimized by a previous open; raising a minimized window does
+        // nothing, so it comes back first — and its rows are re-read once it has redrawn,
+        // because the ones held from before point at where it used to be.
+        if let listWindow {
+            let found = ListWindowRestore.rowsAfterRestoring(
+                listWindow: listWindow,
+                scanner: scanner,
+                limit: 60,
+                log: log
+            )
+            if found.count > 2 {
+                rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
+                log("복원 후 재스캔 \(found.count)개")
+            }
         }
 
         // 1. Front. KakaoTalk has to be frontmost for a click to reach it.
