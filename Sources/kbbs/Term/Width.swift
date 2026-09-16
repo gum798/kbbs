@@ -103,16 +103,23 @@ struct Width {
 
     // MARK: - Convenience for the default (narrow-ambiguous) terminal
 
-    private static let narrow = Width()
+    /// What every screen composer measures with. Narrow until the boot probe says
+    /// otherwise; written once, from the main thread, before the first frame.
+    nonisolated(unsafe) private static var shared = Width()
 
-    static func cells(_ text: String) -> Int { narrow.width(of: text) }
-    static func truncate(_ text: String, to limit: Int) -> String { narrow.truncate(text, to: limit) }
-    static func pad(_ text: String, to limit: Int) -> String { narrow.pad(text, to: limit) }
-    static func elide(_ text: String, to limit: Int) -> String { narrow.elide(text, to: limit) }
+    /// Adopt what the DSR-CPR probe measured. One call, at boot.
+    static func adoptAmbiguousWide(_ wide: Bool) {
+        shared.ambiguousIsWide = wide
+    }
+
+    static func cells(_ text: String) -> Int { shared.width(of: text) }
+    static func truncate(_ text: String, to limit: Int) -> String { shared.truncate(text, to: limit) }
+    static func pad(_ text: String, to limit: Int) -> String { shared.pad(text, to: limit) }
+    static func elide(_ text: String, to limit: Int) -> String { shared.elide(text, to: limit) }
 
     /// Elide, then pad to exactly `limit` cells. The common case for a table column.
     static func column(_ text: String, to limit: Int) -> String {
-        narrow.pad(narrow.elide(text, to: limit), to: limit)
+        shared.pad(shared.elide(text, to: limit), to: limit)
     }
 
     // MARK: - Control characters

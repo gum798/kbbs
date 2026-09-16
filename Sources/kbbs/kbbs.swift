@@ -45,15 +45,19 @@ struct Kbbs: ParsableCommand {
     @Flag(name: .long, help: "접근성 트리를 어떻게 훑었는지 표준오류로 남긴다")
     var trace = false
 
+    @Flag(name: .long, help: "대화형 화면 대신 한 장만 찍고 끝낸다 (파이프로 넘길 때)")
+    var once = false
+
     func run() throws {
         Paths.ensureDirectory()
+        TTYOut.capture()
         let ladder = BootLadder()
         ladder.banner(version: BuildVersion.current)
 
         if demo {
             ladder.step("예시 모드", "확인", detail: "카카오톡을 읽지 않습니다")
             ladder.connected()
-            draw(Kbbs.demoRooms, link: .live(lastRefresh: Date()))
+            run(rooms: Kbbs.demoRooms) { Kbbs.demoRooms }
             return
         }
 
@@ -96,10 +100,6 @@ struct Kbbs: ParsableCommand {
             : nil
         tracer?("windows: " + app.windows.map { "「\($0.title ?? "-")」" }.joined(separator: " "))
 
-        // Ambiguous-width glyphs are measured with a DSR-CPR probe, which needs raw
-        // mode. Until that exists we assume narrow and say so rather than pretending.
-        ladder.step("문자폭 (▶ ● ─ 등)", "좁게 1칸", detail: "측정 전 기본값")
-
         let started = Date()
         let scanner = ChatListScanner()
         let items = scanner.scan(in: listWindow, limit: limit, trace: tracer)
@@ -134,17 +134,60 @@ struct Kbbs: ParsableCommand {
         ladder.note("잠금 화면은 건드리지 않습니다. 암호를 여러 번 틀리면 계정이 로그아웃됩니다.")
         ladder.connected()
 
-        draw(rooms, link: .live(lastRefresh: Date()))
+        let rescan: () -> [Room]? = {
+            let found = scanner.scan(in: listWindow, limit: limit, trace: tracer)
+            guard !found.isEmpty else { return nil }
+            let open = Set(app.windows.compactMap { $0.title })
+            return found.map { item in
+                Room(
+                    title: item.discovery.title,
+                    lastMessage: item.discovery.lastMessage,
+                    timeLabel: item.discovery.timeLabel,
+                    unreadCount: item.discovery.unreadCount,
+                    hasWindow: Kbbs.hasOpenWindow(item.discovery.title, among: open, listWindow: listWindow.title)
+                )
+            }
+        }
+
+        run(rooms: rooms, rescan: rescan)
     }
 
-    private func draw(_ rooms: [Room], link: LinkState) {
-        var state = ListState()
-        state.rooms = rooms
-        state.link = link
-        state.clock = Date()
-        for row in ListScreen.render(state).render() {
-            print(row)
+    /// One frame to stdout, or the whole terminal, depending on `--once`.
+    private func run(rooms: [Room], rescan: @escaping () -> [Room]?) {
+        if once {
+            var state = ListState()
+            state.rooms = rooms
+            state.link = .live(lastRefresh: Date())
+            state.clock = Date()
+            for row in ListScreen.render(state).render() {
+                print(row)
+            }
+            return
         }
+
+        // From here on stdout and stderr belong to the log file. Anything that prints —
+        // a Swift runtime warning, the AX tracer — would otherwise land mid-frame.
+        TTYOut.redirect()
+        RawMode.installSignalHandlers()
+        guard RawMode.enter() else {
+            TTYOut.restore()
+            print("터미널을 제어할 수 없습니다 (tty 가 아닙니다). 한 장만 보려면 --once 를 쓰세요.")
+            return
+        }
+        defer {
+            RawMode.restore()
+            TTYOut.restore()
+            BootLadder().hangUp()
+        }
+
+        // Inside the alternate screen and before the first frame: the one moment when
+        // nothing else writes to the terminal and nobody is typing.
+        let probe = WidthProbe.run()
+        Width.adoptAmbiguousWide(probe.isWide)
+        TTYOut.log("width probe: \(probe.describedInKorean)")
+
+        var loop = Loop(rooms: rooms, link: .live(lastRefresh: Date()), refresh: rescan)
+        loop.run()
     }
 
     /// Whether KakaoTalk has a window open for this room.
@@ -243,6 +286,27 @@ struct Kbbs: ParsableCommand {
         Room(title: "점심 메뉴 추천방", lastMessage: "오늘은 국밥", timeLabel: "3일"),
         Room(title: "정은지", lastMessage: "링크 보냈어요", timeLabel: "3일"),
         Room(title: "동아리 번개", lastMessage: "다들 시간 되시나요", timeLabel: "4일"),
+        // Past thirteen on purpose: 31 rooms is three pages with a partial last one of
+        // five, which is the only way to see paging and the blank slots without
+        // touching a real account.
+        Room(title: "윤지원✨", lastMessage: "그래요", timeLabel: "4일", hasWindow: true),
+        Room(title: "한지민", lastMessage: "확인했습니다", timeLabel: "5일"),
+        Room(title: "주말 등산 모임", lastMessage: "이번엔 관악산 어때요", timeLabel: "5일", unreadCount: 7),
+        Room(title: "강동원", lastMessage: "ㅇㅇ", timeLabel: "6일"),
+        Room(title: "치킨 시켜먹는 방", lastMessage: "오늘도 시킬 사람", timeLabel: "6일"),
+        Room(title: "부서 공유", lastMessage: "회의록 올렸습니다", timeLabel: "1주"),
+        Room(title: "임채린", lastMessage: "[이모티콘]", timeLabel: "1주"),
+        Room(title: "중고거래 문의", lastMessage: "아직 판매중인가요?", timeLabel: "1주", unreadCount: 2),
+        Room(title: "옥탑방 고양이들", lastMessage: "밥 주고 왔어요", timeLabel: "1주"),
+        Room(title: "서지훈", lastMessage: "내일 봐요", timeLabel: "2주"),
+        Room(title: "독서모임 「활자」", lastMessage: "다음 책 정했습니다", timeLabel: "2주"),
+        Room(title: "은행 알림", lastMessage: "출금 50,000원", timeLabel: "2주"),
+        Room(title: "택배 알림", lastMessage: "배송이 완료되었습니다", timeLabel: "3주"),
+        Room(title: "오래된 단톡방", lastMessage: "다들 잘 지내니", timeLabel: "3주"),
+        Room(title: "회사 동기", lastMessage: "점심 뭐 먹지", timeLabel: "3주"),
+        Room(title: "정기구독 안내", lastMessage: "결제가 완료되었습니다", timeLabel: "4주"),
+        Room(title: "박서준", lastMessage: "고마워요", timeLabel: "4주"),
+        Room(title: "나와의 채팅", lastMessage: "메모: 우유 사기", timeLabel: "4주"),
     ]
 
     static func main() {

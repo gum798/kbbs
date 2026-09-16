@@ -26,6 +26,10 @@ struct KeyDecoder {
     /// Bytes of an escape sequence that has not finished arriving, including the ESC.
     private var escape: [UInt8] = []
 
+    /// Whether an Esc is being held for the grace period. The loop starts its timer off
+    /// this rather than tracking the same fact twice.
+    var hasPendingEscape: Bool { escape == [0x1B] }
+
     mutating func feed(_ bytes: [UInt8]) -> [Key] {
         var keys: [Key] = []
         for byte in bytes {

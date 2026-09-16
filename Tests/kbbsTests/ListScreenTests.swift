@@ -220,4 +220,30 @@ extension ListScreenTests {
         XCTAssertTrue(rows[5].contains("[모빙] 고객님"), "preview reads: \(rows[5])")
     }
 
+    // MARK: - The transient note
+
+    /// The screen has to be able to answer back — an out-of-range room number, a refusal
+    /// while the scan is busy. It replaces the hotkey row's spare space rather than
+    /// taking a row of its own, because there is no row to spare.
+    func testANoteAppearsOnTheHotkeyRow() {
+        var s = state(3)
+        s.note = "그런 방은 없습니다"
+        let rows = plain(ListScreen.render(s).render())
+        XCTAssertTrue(rows[21].contains("그런 방은 없습니다"), "row 21 reads: \(rows[21])")
+    }
+
+    func testALongNoteStillLeavesEveryRowEightyCells() {
+        var s = state(27)
+        s.note = "카카오톡이 응답하지 않습니다. 기다리거나 Ctrl-C 로 종료하세요. 아주 긴 안내문"
+        for (i, row) in plain(ListScreen.render(s).render()).enumerated() {
+            XCTAssertEqual(Width.cells(row), 80, "row \(i)")
+        }
+    }
+
+    func testWithoutANoteTheHotkeyRowIsUnchanged() {
+        let without = plain(ListScreen.render(state(3)).render())[21]
+        XCTAssertTrue(without.contains("P:이전"))
+        XCTAssertTrue(without.contains("Q:종료"))
+    }
+
 }

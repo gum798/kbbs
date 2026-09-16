@@ -177,4 +177,21 @@ final class KeysTests: XCTestCase {
         XCTAssertEqual(d.feed([b[0], b[1]]), [])
         XCTAssertEqual(d.feed(bytes("a")), [.char("a")])
     }
+    /// The loop has to know whether an Esc is being held, so it can start the clock on
+    /// it. Asking the decoder is how it avoids keeping a second copy of that state.
+    func testTheDecoderSaysWhenItIsHoldingAnEscape() {
+        var d = KeyDecoder()
+        XCTAssertFalse(d.hasPendingEscape)
+        _ = d.feed([0x1B])
+        XCTAssertTrue(d.hasPendingEscape)
+        _ = d.feed([0x5B, 0x41])
+        XCTAssertFalse(d.hasPendingEscape)
+    }
+
+    func testAnOrdinaryKeyLeavesNothingPending() {
+        var d = KeyDecoder()
+        _ = d.feed(bytes("a"))
+        XCTAssertFalse(d.hasPendingEscape)
+    }
+
 }

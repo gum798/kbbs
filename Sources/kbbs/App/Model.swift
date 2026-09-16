@@ -60,6 +60,10 @@ struct ListState {
     var link: LinkState = .connecting
     var clock = Date()
 
+    /// Something the screen has to say back — a room number nobody has, a refusal while
+    /// the scan is busy. The run loop clears it after a moment; the model only holds it.
+    var note: String?
+
     static let rowsPerPage = 13
 
     var pageCount: Int { max(1, (rooms.count + ListState.rowsPerPage - 1) / ListState.rowsPerPage) }

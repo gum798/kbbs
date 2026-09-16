@@ -54,6 +54,14 @@ struct BootLadder {
         out("")
     }
 
+    /// Printed into the scrollback on the way out, after termios is restored — so it is
+    /// also the proof that kbbs gave the terminal back rather than crashing out of it.
+    func hangUp() {
+        out("")
+        out(" NO CARRIER — 접속을 종료했습니다.")
+        out("")
+    }
+
     func failed(_ reason: String) {
         out("")
         out(" NO CARRIER — " + reason)

@@ -69,7 +69,7 @@ enum ListScreen {
         f.set(18, Frame.rule(left: Theme.teeL, fill: Theme.h, right: Theme.teeR, width: width))
         f.set(rowStatus, bordered(statusLine(state)))
         f.set(20, Frame.rule(left: Theme.teeL, fill: Theme.h, right: Theme.teeR, width: width))
-        f.set(rowHotkeys, bordered("  P:이전  N:다음  R:새로고침  Q:종료"))
+        f.set(rowHotkeys, bordered(hotkeyLine(state)))
         f.set(rowPrompt, bordered(promptLine(state)))
         f.set(23, Frame.rule(left: Theme.bl, fill: Theme.h, right: Theme.br, width: width))
 
@@ -150,6 +150,19 @@ enum ListScreen {
         case .slow: return "[응답 느림]"
         case .down: return "[응답 없음]"
         }
+    }
+
+    /// The hotkeys, with any note filling the space after them.
+    ///
+    /// The note goes here rather than on a row of its own because there is no row to
+    /// spare: 24 lines are all accounted for. A note longer than the gap is truncated
+    /// rather than pushing the hotkeys off the left.
+    private static func hotkeyLine(_ state: ListState) -> String {
+        let keys = "  P:이전  N:다음  R:새로고침  Q:종료"
+        guard let note = state.note, !note.isEmpty else { return keys }
+        let spare = inner - Width.cells(keys) - 2
+        guard spare > 2 else { return keys }
+        return keys + "  " + Width.elide(note, to: spare)
     }
 
     private static func promptLine(_ state: ListState) -> String {

@@ -210,4 +210,25 @@ extension WidthTests {
         XCTAssertEqual(Width.cells("\u{2764}\u{FE0E}"), 1)
     }
 
+    // MARK: - Adopting what the boot probe measured
+
+    /// The probe runs once, inside the alternate screen, and its answer has to reach the
+    /// static helpers every screen composer calls. Without this the measurement would be
+    /// taken and then ignored.
+    func testTheMeasuredSettingReachesTheStaticHelpers() {
+        defer { Width.adoptAmbiguousWide(false) }
+        XCTAssertEqual(Width.cells("▶"), 1)
+        Width.adoptAmbiguousWide(true)
+        XCTAssertEqual(Width.cells("▶"), 2)
+        Width.adoptAmbiguousWide(false)
+        XCTAssertEqual(Width.cells("▶"), 1)
+    }
+
+    func testAdoptingWideDoesNotDisturbHangul() {
+        defer { Width.adoptAmbiguousWide(false) }
+        Width.adoptAmbiguousWide(true)
+        XCTAssertEqual(Width.cells("가나다"), 6)
+        XCTAssertEqual(Width.cells("abc"), 3)
+    }
+
 }
