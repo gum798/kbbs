@@ -312,9 +312,11 @@ struct Loop {
     }
 
     private mutating func handleList(_ key: Key) -> Outcome {
-        switch Hotkey.command(for: key) {
+        switch Hotkey.command(for: key, allowingHangul: true) {
         case .quit: return .quit
         case .refresh: rescan(); return .carryOn
+        case .cursorUp: list.moveUp(); return .carryOn
+        case .cursorDown: list.moveDown(); return .carryOn
         case .closeWindow:
             if let index = list.selectedRoomIndex, list.rooms[index].hasWindow {
                 submit(.closeWindow(title: list.rooms[index].title))
@@ -332,9 +334,9 @@ struct Loop {
         }
 
         switch key {
-        case .up, .char("K"):
+        case .up:
             list.moveUp()
-        case .down, .char("J"):
+        case .down:
             list.moveDown()
         case .home:
             list.page = 0
@@ -393,7 +395,7 @@ struct Loop {
                 submit(.readRoom(token: token, title: room.title, limit: Self.roomReadLimit))
             }
             return .carryOn
-        case .pagePrevious, .pageNext, .none:
+        case .pagePrevious, .pageNext, .cursorUp, .cursorDown, .none:
             break
         }
 
@@ -441,7 +443,7 @@ struct Loop {
 
         switch confirm.stage {
         case .asking:
-            if Hotkey.command(for: key) == .quit { return .quit }
+            if Hotkey.command(for: key, allowingHangul: true) == .quit { return .quit }
             switch key {
             case .enter where confirm.acceptsEnter():
                 list.confirm?.stage = .opening(step: 0)
@@ -456,7 +458,7 @@ struct Loop {
             // Ctrl-C still works because it arrives as a signal, not as a key.
             if case .control("c") = key { return .quit }
         case .failed:
-            switch Hotkey.command(for: key) {
+            switch Hotkey.command(for: key, allowingHangul: true) {
             case .quit: return .quit
             case .refresh:
                 dismissConfirm()
@@ -475,7 +477,7 @@ struct Loop {
     }
 
     private mutating func handleBlocked(_ key: Key) -> Outcome {
-        switch Hotkey.command(for: key) {
+        switch Hotkey.command(for: key, allowingHangul: true) {
         case .quit:
             return .quit
         case .refresh:
@@ -495,7 +497,7 @@ struct Loop {
     }
 
     private mutating func handleWaiting(_ key: Key) -> Outcome {
-        if Hotkey.command(for: key) == .quit { return .quit }
+        if Hotkey.command(for: key, allowingHangul: true) == .quit { return .quit }
         switch key {
         case .escape:
             waiting = nil

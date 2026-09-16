@@ -51,4 +51,46 @@ final class HotkeyTests: XCTestCase {
     func testControlCAlwaysQuits() {
         XCTAssertEqual(Hotkey.command(for: .control("c"), composerEmpty: false), .quit)
     }
+    // MARK: - Korean keyboard
+
+    /// With the IME in Korean, the R key produces ㄱ (or ㄲ with Shift). The list screen
+    /// has no text to type, so it reads the jamo as the key that made it.
+    func testKoreanJamoWorkAsHotkeysOnTheList() {
+        XCTAssertEqual(Hotkey.command(for: .char("ㅃ"), allowingHangul: true), .quit)
+        XCTAssertEqual(Hotkey.command(for: .char("ㄲ"), allowingHangul: true), .refresh)
+        XCTAssertEqual(Hotkey.command(for: .char("ㅖ"), allowingHangul: true), .pagePrevious)
+        XCTAssertEqual(Hotkey.command(for: .char("ㅜ"), allowingHangul: true), .pageNext)
+        XCTAssertEqual(Hotkey.command(for: .char("ㅉ"), allowingHangul: true), .closeWindow)
+        XCTAssertEqual(Hotkey.command(for: .char("ㄴ"), allowingHangul: true), .showWindow)
+    }
+
+    /// Shift doubles a consonant but leaves a vowel alone, so both spellings of each key
+    /// have to be understood.
+    func testBothTheShiftedAndUnshiftedJamoAreUnderstood() {
+        XCTAssertEqual(Hotkey.command(for: .char("ㅂ"), allowingHangul: true), .quit)
+        XCTAssertEqual(Hotkey.command(for: .char("ㄱ"), allowingHangul: true), .refresh)
+        XCTAssertEqual(Hotkey.command(for: .char("ㅔ"), allowingHangul: true), .pagePrevious)
+        XCTAssertEqual(Hotkey.command(for: .char("ㅈ"), allowingHangul: true), .closeWindow)
+    }
+
+    func testCursorJamoMoveTheCursor() {
+        XCTAssertEqual(Hotkey.command(for: .char("ㅏ"), allowingHangul: true), .cursorUp)
+        XCTAssertEqual(Hotkey.command(for: .char("ㅓ"), allowingHangul: true), .cursorDown)
+        XCTAssertEqual(Hotkey.command(for: .char("K"), allowingHangul: true), .cursorUp)
+        XCTAssertEqual(Hotkey.command(for: .char("J"), allowingHangul: true), .cursorDown)
+    }
+
+    /// The conversation screen must not do this: ㄱ there is the first letter of a word.
+    func testAJamoIsJustTextInTheComposer() {
+        XCTAssertNil(Hotkey.command(for: .char("ㄲ")))
+        XCTAssertNil(Hotkey.command(for: .char("ㅃ")))
+        XCTAssertNil(Hotkey.command(for: .char("ㄴ"), composerEmpty: true))
+    }
+
+    /// A whole syllable is never a hotkey — it is something the user typed on purpose.
+    func testACompleteSyllableIsNotAHotkey() {
+        XCTAssertNil(Hotkey.command(for: .char("가"), allowingHangul: true))
+        XCTAssertNil(Hotkey.command(for: .char("나"), allowingHangul: true))
+    }
+
 }
