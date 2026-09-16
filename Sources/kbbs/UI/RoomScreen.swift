@@ -14,6 +14,7 @@ struct RoomState {
     /// How often this room is being re-read, in seconds. Derived from measurement, so
     /// the screen states it rather than claiming a cadence it is not keeping.
     var pollSeconds: TimeInterval?
+    var pending: [PendingLedger.Entry] = []
 
     init(title: String) {
         self.title = title
@@ -100,11 +101,13 @@ enum RoomScreen {
             + String(repeating: "─", count: fill - left) + " "
     }
 
-    /// The transcript as flat lines, newest last, clipped to what fits from the bottom.
     private static func transcriptLines(_ state: RoomState) -> [String] {
         var lines: [String] = []
         for message in state.messages {
             lines.append(contentsOf: messageLines(message))
+        }
+        for entry in state.pending {
+            lines.append(contentsOf: pendingLines(entry))
         }
         let capacity = transcriptRows.count
         guard lines.count > capacity else { return lines }
@@ -130,6 +133,21 @@ enum RoomScreen {
             lines.append(hang() + bodyCell("↑ 화면 위치로만 추정한 발신자입니다"))
         }
         return lines
+    }
+
+    /// Drawn below the transcript because it is not in the transcript yet — that is the
+    /// whole point of the marker.
+    private static func pendingLines(_ entry: PendingLedger.Entry) -> [String] {
+        let marker = entry.state == .sending ? "[전송중]" : "[미확인]"
+        let budget = Col.body - Width.cells(marker) - 1
+        let wrapped = Width.wrap(entry.body, to: max(1, budget))
+        return wrapped.enumerated().map { index, text in
+            let isLast = index == wrapped.count - 1
+            let content = isLast ? Width.pad(text, to: budget) + " " + marker : text
+            return index == 0
+                ? " " + Width.pad("", to: Col.time) + " " + Width.column("나", to: Col.author) + " " + bodyCell(content)
+                : hang() + bodyCell(content)
+        }
     }
 
     private static func head(_ message: TranscriptMessage) -> String {

@@ -52,6 +52,7 @@ struct Loop {
     /// what keeps the queue from filling with reads nobody is waiting for any more.
     private var axBusy = false
     private var roomToken: Int?
+    private var ledger = PendingLedger()
     private var readFailures = 0
 
     private let worker: AXWorker?
@@ -151,6 +152,8 @@ struct Loop {
             guard roomToken == token, var room = roomState else { break }
             readFailures = 0
             room.messages = snapshot.messages
+            ledger.reconcile(against: snapshot.messages)
+            room.pending = ledger.entries
             room.link = .live(lastRefresh: Date())
             room.pollSeconds = Self.roomPoll
             room.note = String(format: "%d개 · 읽기 %.1f초", snapshot.count, elapsed)
@@ -177,6 +180,23 @@ struct Loop {
             list.confirm = ConfirmBox(title: title, stage: .failed(reason: reason))
             screen = .confirm
             lastFrame = []
+
+        case .sent(_, let cleared):
+            roomState?.note = cleared ? "보냈습니다 — 전사에서 확인 중" : "눌렀지만 입력창에 남아 있습니다. 다시 보내지 마세요."
+            noteSetAt = Date()
+            nextRoomPoll = Date().addingTimeInterval(1.0)
+
+        case .sendRefused(let body, let reason):
+            // Every refusal happens before the press, so nothing was sent — the text is
+            // handed back to the composer rather than lost.
+            ledger.dropLast(body: body)
+            if var room = roomState {
+                room.pending = ledger.entries
+                if room.composer.isEmpty { room.composer = body }
+                room.note = "보내지 않았습니다: \(reason)"
+                roomState = room
+            }
+            noteSetAt = Date()
 
         case .failed(let reason):
             readFailures += 1
@@ -291,9 +311,14 @@ struct Loop {
         case .backspace:
             if !room.composer.isEmpty { room.composer.removeLast() }
         case .enter:
-            if !room.composer.isEmpty {
-                room.note = "전송은 아직 없습니다 (M6). 입력은 보관됩니다."
-                noteSetAt = Date()
+            if !room.composer.isEmpty, let token = roomToken, !axBusy {
+                let body = room.composer
+                room.composer = ""
+                ledger.add(body: body, transcript: room.messages)
+                room.pending = ledger.entries
+                roomState = room
+                submit(.send(token: token, body: body))
+                return .carryOn
             }
         case .char(let c):
             if room.composer.unicodeScalars.count < 300 {
@@ -401,6 +426,7 @@ struct Loop {
     }
 
     private mutating func leaveRoom() {
+        ledger = PendingLedger()
         if let token = roomToken { worker?.release(token: token) }
         roomToken = nil
         roomState = nil

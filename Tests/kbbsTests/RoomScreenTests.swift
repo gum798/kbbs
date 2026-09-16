@@ -170,4 +170,34 @@ final class RoomScreenTests: XCTestCase {
             XCTAssertEqual(Width.cells(row), 80, "row \(i)")
         }
     }
+    func testAPendingMessageIsMarkedAsSending() {
+        var s = state([])
+        var ledger = PendingLedger()
+        ledger.add(body: "보내는 중인 말", transcript: [])
+        s.pending = ledger.entries
+        let rows = plain(RoomScreen.render(s).render())
+        XCTAssertTrue(rows.contains { $0.contains("보내는 중인 말") && $0.contains("[전송중]") }, "\(rows)")
+    }
+
+    func testAnUnconfirmedMessageSaysSo() {
+        var s = state([])
+        var ledger = PendingLedger()
+        let sent = Date(timeIntervalSince1970: 0)
+        ledger.add(body: "확인 안 된 말", transcript: [], now: sent)
+        ledger.reconcile(against: [], now: sent.addingTimeInterval(20))
+        s.pending = ledger.entries
+        let rows = plain(RoomScreen.render(s).render())
+        XCTAssertTrue(rows.contains { $0.contains("[미확인]") }, "\(rows)")
+    }
+
+    func testAPendingMessageKeepsTheFrame() {
+        var s = state([message("앞선 말", author: "김민수")])
+        var ledger = PendingLedger()
+        ledger.add(body: String(repeating: "긴 메시지 ", count: 12), transcript: [])
+        s.pending = ledger.entries
+        for (i, row) in plain(RoomScreen.render(s).render()).enumerated() {
+            XCTAssertEqual(Width.cells(row), 80, "row \(i)")
+        }
+    }
+
 }

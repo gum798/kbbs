@@ -13,6 +13,7 @@ enum AXJob: Sendable {
     /// The one job that posts a hardware event. Only ever queued after the user has said
     /// Y to the gate that spells out what it does.
     case openWindow(title: String)
+    case send(token: Int, body: String)
 }
 
 /// A finished job, reduced to things that are safe to hand to the main thread.
@@ -24,6 +25,8 @@ enum AXResult: Sendable {
     /// A step of the window-opening ladder finished. `step` is how many are done.
     case openingStep(title: String, step: Int)
     case openFailed(title: String, reason: String)
+    case sent(body: String, composerCleared: Bool)
+    case sendRefused(body: String, reason: String)
     case failed(reason: String)
 }
 
@@ -212,6 +215,7 @@ final class AXWorker: @unchecked Sendable {
         case .openRoom: return "대화방 열기"
         case .readRoom: return "대화 읽기"
         case .openWindow: return "창 열기"
+        case .send: return "전송"
         }
     }
 
@@ -280,6 +284,17 @@ final class AXWorker: @unchecked Sendable {
 
         case .openWindow(let title):
             return openWindow(titled: title)
+
+        case .send(let token, let body):
+            guard let opened = contexts[token] else {
+                return .sendRefused(body: body, reason: "대화방 연결이 끊겼습니다")
+            }
+            do {
+                let outcome = try Sender(trace: trace).send(body, window: opened.window, context: opened.context)
+                return .sent(body: body, composerCleared: outcome == .composerCleared)
+            } catch {
+                return .sendRefused(body: body, reason: "\(error)")
+            }
         }
     }
 
