@@ -1,189 +1,117 @@
-# kbbs — macOS용 카카오톡 CLI 및 MCP 서버
+# kbbs — 카카오톡을 하이텔처럼 쓰는 터미널
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Total downloads](https://img.shields.io/github/downloads/channprj/kbbs/total?label=downloads&logo=github)](https://github.com/channprj/kbbs/releases)
+macOS 터미널에서 카카오톡을 읽고 씁니다. 80×24 전체화면, 이중선 박스, 번호 매긴
+대화방 목록, `선택>` 프롬프트.
 
-[프로젝트 홈페이지](https://channprj.github.io/kbbs/) · [English](README.en.md)
-
-<p><img src="assets/kbbs-logo.jpg" alt="kbbs logo" width="220" /></p>
-
-`kbbs`는 macOS용 비공식 카카오톡 CLI이자 네이티브 MCP 서버입니다.
-macOS 손쉬운 사용 API로 메시지를 읽고, 감시하고, 전송하며 로컬 자동화와
-AI 에이전트를 위한 구조화된 출력을 제공합니다.
-
-> **Disclaimer**: `kbbs`는 Kakao Corp. 의 공식 도구가 아닙니다.
-> 사용자는 본인 계정/환경에서 관련 법규, 서비스 약관, 회사 보안 정책을 준수할 책임이 있습니다.
-> 이 도구 사용으로 발생할 수 있는 계정 제한, 오작동, 데이터 손실, 기타 손해에 대한 책임은 사용자에게 있습니다.
-> LOCO Protocol 이 아닌 AX 를 사용한 이유와 계정 제재 가능성에 대한 제 개인적인 판단은 [왜 KakaoTalk 의 LOCO Protocol 을 사용하지 않나요?](ARCHITECTURE.md#accessibility-instead-of-a-private-protocol) 항목을 참고해 주세요.
-
-## AX(Accessibility API)를 핵심으로 개발
-
-`kbbs`는 macOS의 공식 Accessibility API, 즉 AX를 핵심 자동화 계층으로
-사용해 개발되었습니다. Swift에서 `ApplicationServices`와 `AXUIElement`를
-직접 호출해 사용자가 보는 KakaoTalk 창, 채팅 목록, 메시지 영역, 입력창을
-탐색하고 제어합니다. 키보드와 마우스 입력이 필요한 동작은 `CGEvent`를
-사용합니다.
-
-```text
-CLI / MCP
-  → KakaoTalkApp
-  → UIElement
-  → AXUIElement
-  → macOS용 KakaoTalk
 ```
-
-- [`UIElement`](Sources/kbbs/Accessibility/UIElement.swift)는 AX 속성 조회,
-  계층 탐색, 값 설정, 액션 실행을 Swift 인터페이스로 감쌉니다.
-- [`AXActionRunner`](Sources/kbbs/Accessibility/AXActionRunner.swift)는
-  AX 액션과 `CGEvent` 기반 입력을 실행합니다.
-- [`AXPathCache`](Sources/kbbs/Accessibility/AXPathCache.swift)는 자주 쓰는
-  UI 경로를 캐시하고, KakaoTalk UI가 바뀌어 경로가 유효하지 않으면 다시
-  탐색할 수 있게 합니다.
-
-이 구조는 `kbbs` 자체가 KakaoTalk 서버나 비공개 LOCO 프로토콜에 직접
-연결하지 않고, 사용자가 실제로 조작하는 앱 UI를 통해 동작한다는 뜻입니다.
-따라서 설치한 `kbbs` 바이너리에 macOS 손쉬운 사용 권한이 필요하며,
-KakaoTalk UI 구조가 바뀌면 일부 탐색 경로가 영향을 받을 수 있습니다.
-자세한 설계 배경과 제약은 [아키텍처 문서](ARCHITECTURE.md)를 참고하세요.
-
-## 데모
-
-https://github.com/user-attachments/assets/c620b2e3-7106-40fa-86d1-ed847e3b1a6f
-
-## 실사용 후기
-
-<a href="https://www.youtube.com/watch?v=_Pd1G33_R48&t=1020s"><img src="https://i.ytimg.com/vi/_Pd1G33_R48/maxresdefault.jpg" alt="실사용 후기: 헤르메스 에이전트 5개로 뉴스 큐레이션부터 주식 매매까지 자동화한 방법 전부 공개합니다" width="400" /></a>
-
-**Builder Josh:** [헤르메스 에이전트 5개로 뉴스 큐레이션부터 주식 매매까지 자동화한 방법 전부 공개합니다 (AI 엔지니어 샘 호트만님)](https://www.youtube.com/watch?v=_Pd1G33_R48&t=1020s) — 17:00부터 재생
-
-<a href="https://www.youtube.com/watch?v=xz5fA7OyvQ0"><img src="https://i.ytimg.com/vi/xz5fA7OyvQ0/maxresdefault.jpg" alt="실사용 후기: 나만의 Hermes 시스템 구축 방법" width="400" /></a>
-
-**샘 호트만:** [나만의 Hermes 시스템 구축 방법 (문제정의부터 구축까지, 해외 AI 인사이트 발굴하기)](https://www.youtube.com/watch?v=xz5fA7OyvQ0)
-
-## 주요 기능
-
-- 채팅 목록을 조회하고 재사용 가능한 로컬 `chat_id`를 생성합니다.
-- 최근 메시지를 읽거나 새 메시지를 실시간으로 감시합니다.
-- 화면에 표시되는 KakaoTalk UI를 제어해 텍스트와 이미지를 전송합니다.
-- 구조화된 JSON을 `stdout`으로 출력하고 AX 추적 로그는 `stderr`로 분리합니다.
-- 읽기, 텍스트 전송, 이미지 전송 도구를 제공하는 native stdio MCP 서버를 실행합니다.
-- background-safe 읽기, 창 레이아웃, 복구 모드, self-healing AX path cache를 지원합니다.
-
-## 요구사항
-
-- macOS 13 이상
-- [macOS용 KakaoTalk](https://apps.apple.com/kr/app/kakaotalk/id869223134?mt=12)
-- 설치된 `kbbs` 바이너리에 대한 손쉬운 사용 권한
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  K B B S   카카오톡 통신                              2026-09-16 (수) 16:10  ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ 번호    대화방             마지막 대화                             시각 안읽 ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ ▶  1. * 김민수             내일 몇 시에 봐요?                     21:03    2 ║
+║    2. * 개발팀             빌드 깨졌어요 확인 부탁드립니다        20:58   14 ║
+║    3. - 어머니             밥은 먹었니                            20:31      ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  전체 60개 / 1-13 (1/5 쪽) / 갱신 16:09:55 / *=창열림 -=창없음     [연결됨]  ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  P:이전  N:다음  R:새로고침  W:창닫기  Q:종료                                ║
+║                                                   선택> _                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+```
 
 ## 설치
 
-Homebrew 설치를 권장합니다.
+```bash
+brew install gum798/kbbs/kbbs
+```
+
+소스에서 직접:
 
 ```bash
-brew install channprj/tap/kbbs
+git clone https://github.com/gum798/kbbs.git
+cd kbbs && make install      # ~/bin/kbbs
 ```
 
-이미 설치했다면 다음 명령으로 업데이트합니다.
+첫 실행 때 **손쉬운 사용 권한**을 요청합니다. 시스템 설정 > 개인정보 보호 및 보안 >
+손쉬운 사용에서 `kbbs` 를 켜 주세요. macOS 는 이 권한을 **바이너리마다** 기억하므로,
+업그레이드한 뒤 한 번 더 물어볼 수 있습니다.
+
+## 쓰기
 
 ```bash
-kbbs update
+kbbs                    # 대화방 목록
+kbbs --demo             # 카카오톡 없이 화면만 (권한도 필요 없음)
+kbbs --room "누나"       # 그 방으로 바로
+kbbs --once             # 대화형 대신 한 장만 찍고 끝 (파이프용)
 ```
 
-`kbbs update`는 필요하면 Homebrew를 설치하고, 포뮬러를 설치하거나 업그레이드한
-뒤, 직접 설치한 바이너리를 Homebrew 명령으로 연결합니다.
+**목록에서** — `↑↓`/`K J` 이동, 숫자 입력 후 `Enter`, `P`/`N` 쪽 넘김,
+`R` 새로고침, `W` 창 닫기, `Q` 종료. 한글 입력 상태에서도 됩니다 (`ㄲ` = `R`).
 
-직접 다운로드와 소스 빌드 방법은 [USAGE.md](USAGE.md#installation)를 참고하세요.
+**대화방에서** — 글 쓰고 `Enter` 로 전송, `⌥Enter`/`Ctrl-J` 로 줄바꿈,
+`Esc` 목록으로, `S` 카카오톡에서 창 보기, `W` 창 닫기.
 
-## 빠른 시작
+`*` 는 카카오톡에 창이 열려 있는 방입니다. `-` 인 방은 들어갈 때 카카오톡이 잠깐
+앞으로 나와 목록의 해당 줄을 대신 눌러 줍니다 — 그 전에 물어봅니다.
+
+## 무엇을 하고, 무엇을 안 하는가
+
+**합니다** — 대화방 목록, 대화 읽기, 3초 주기 실시간 수신, 메시지 전송(줄바꿈 포함),
+창 열기/닫기.
+
+**안 합니다** — 이미지·파일 전송, 검색, 스크롤백(카카오톡이 그려 둔 만큼만 읽힙니다),
+알림, 여러 방 동시 감시, 로그인·암호 입력.
+
+**암호는 절대 입력하지 않습니다.** 여러 번 틀리면 카카오톡이 계정을 로그아웃시키기
+때문이고, 그럴 코드가 바이너리에 아예 없습니다. 잠금 해제는 직접 해 주세요.
+
+## 어떻게 동작하나
+
+macOS 손쉬운 사용 API(AX)로 **화면에 떠 있는 카카오톡을 읽고 조작합니다.** 카카오톡의
+비공개 LOCO 프로토콜은 건드리지 않습니다. 그래서 카카오톡이 실행 중이어야 하고,
+카카오톡이 UI 를 바꾸면 일부가 깨질 수 있습니다.
+
+키보드 이벤트를 쏘는 코드는 **한 줄도 없습니다**. 메시지는 입력창에 값을 직접 넣고
+카카오톡의 「전송」 버튼을 눌러 보냅니다. 창 없는 방을 열 때의 더블클릭이 유일한
+하드웨어 이벤트이고, 그것도 좌표가 카카오톡 목록 창 안인지 확인한 뒤에만 나갑니다.
+
+**보냈다는 판정은 반환값으로 하지 않습니다.** 카카오톡의 「전송」 버튼은 메시지를 보내고도
+실패를 반환합니다(실측). 그래서 보낸 메시지는 전사에서 다시 읽힐 때까지 `[전송중]` 으로
+남고, 9초 안에 안 보이면 `[미확인]` 이 됩니다 — 사라지지 않습니다.
+
+## 진단
+
+카카오톡이 바뀌어서 뭔가 깨졌을 때:
 
 ```bash
-kbbs status
-kbbs chats
-kbbs read "채팅방 이름" --limit 20
-kbbs send "채팅방 이름" "안녕하세요" --dry-run
+kbbs open "방이름" --dry-run   # 클릭 직전까지 좌표·프레임 전부
+kbbs probe-send "방이름"       # 전송 경로. 넣었다 지우기만, 보내지 않음
+kbbs keys                      # 터미널이 실제로 보내는 바이트
+kbbs inspect --depth 5         # AX 트리
+kbbs --room "방" --why         # 발신자를 어떻게 판정했는지 (본문은 안 찍음)
 ```
 
-`kbbs status`는 손쉬운 사용 권한을 요청하고, 필요하면 KakaoTalk을 실행한
-뒤 로그인 상태를 확인합니다. 마지막 명령은 dry run이므로 실제 메시지를
-전송하지 않습니다.
+로그는 `~/.kbbs/kbbs.log`.
 
-## 코딩 에이전트 스킬
+## 요구사항
 
-저장소에 포함된 `kbbs` 스킬을 설치하면 Claude Code와 Codex가 채팅방을
-구조화된 JSON으로 찾고, 안정적인 `chat_id`로 메시지를 읽고, 전송 전에
-dry-run을 수행하는 공통 워크플로우를 사용할 수 있습니다. 먼저 위의
-Homebrew 명령으로 `kbbs`를 설치한 다음 스킬을 전역 설치하세요.
+macOS 13 이상, [macOS용 카카오톡](https://apps.apple.com/kr/app/kakaotalk/id869223134?mt=12),
+손쉬운 사용 권한.
 
-```bash
-npx skills add channprj/kbbs --skill kbbs --agent claude-code codex -g -y
-```
+## 주의
 
-호출 방법은 에이전트마다 다음과 같습니다.
+`kbbs` 는 Kakao Corp. 의 공식 도구가 아니며 제휴·보증 관계가 없습니다. 자동화 도구
+사용으로 발생할 수 있는 계정 제한·오작동·데이터 손실의 책임은 사용자에게 있습니다.
+약관 해석과 제재 기준은 카카오 측 판단이 우선합니다.
 
-| 에이전트 | 호출 |
-| --- | --- |
-| Claude Code | `/kbbs` |
-| Codex | `$kbbs` |
+LOCO 프로토콜 대신 AX 를 쓴 이유는, 비공개 프로토콜을 리버스 엔지니어링하는 쪽이 약관
+위반으로 해석될 여지가 훨씬 크다고 보았기 때문입니다. AX 는 사용자가 실제로 보고
+조작하는 화면을 macOS 의 공식 API 로 다룹니다. 다만 이것도 개인적 판단입니다.
 
-```text
-/kbbs 출시 준비 채팅방의 최근 메시지 10개를 요약해줘
-$kbbs 출시 준비 채팅방에 '배포 완료했습니다.'라고 보내줘
-```
-
-스킬은 텍스트 전송 전에 항상 dry-run으로 수신자와 내용을 확인합니다.
-사용자가 명시적으로 전송을 요청한 경우에만 실제 `send`를 한 번 실행하며,
-초안 작성이나 미리보기 요청은 전송하지 않습니다. `send-image`에는
-dry-run이 없으므로 명확한 수신자와 실제 이미지 전송 요청이 모두 있어야
-실행합니다. 설치 후 스킬이 보이지 않으면 에이전트 세션을 다시 시작하세요.
-
-## 자세한 문서
-
-- [사용법](USAGE.md) — 설치, 명령, 설정, 예제, 문제 해결
-- [아키텍처](ARCHITECTURE.md) — 구성 요소, 데이터 흐름, 상태, 설계 결정
-- [OpenClaw 연동](docs/openclaw.md) — MCP 및 실시간 watch 연동
-- [버전 관리](VERSIONING.md) — 릴리즈 형식과 자동화
-- [영문 README](README.en.md) — 이 문서의 영문 버전
-
-## 자주 묻는 질문
-
-### kbbs는 무엇인가요?
-
-`kbbs`는 macOS용 비공식 오픈소스 카카오톡 CLI이자 네이티브 MCP
-서버입니다. 사용자, 스크립트, AI 에이전트가 명령줄에서 카카오톡
-메시지를 읽고, 감시하고, 전송할 수 있게 해줍니다.
-
-### kbbs는 카카오톡 공식 도구인가요?
-
-아닙니다. `kbbs`는 Kakao Corp.와 제휴하거나 Kakao Corp.의 보증을 받은
-도구가 아니며, 독립적으로 관리되는 오픈소스 프로젝트입니다.
-
-### 어떤 운영체제를 지원하나요?
-
-`kbbs`는 macOS 13 이상과 macOS용 KakaoTalk을 필요로 합니다. Windows,
-Linux, Android, iOS는 지원하지 않습니다.
-
-### kbbs는 카카오톡에 어떻게 접근하나요?
-
-Apple의 macOS 손쉬운 사용 API를 통해 화면에 표시되는 KakaoTalk
-애플리케이션을 제어합니다. KakaoTalk의 비공개 LOCO 프로토콜은 구현하지
-않습니다.
-
-### MCP 서버가 포함되어 있나요?
-
-네. 네이티브 `kbbs mcp-server` 명령은 MCP 호환 클라이언트와 AI
-에이전트에 읽기, 텍스트 전송, 이미지 전송 도구를 stdio로 제공합니다.
-
-### kbbs는 어떻게 설치하나요?
-
-`brew install channprj/tap/kbbs`를 실행해 Homebrew로 설치할 수 있습니다.
-직접 다운로드와 소스 빌드 방법은 [사용법](USAGE.md)에서 확인할 수 있습니다.
-
-## 영감
-
-이 프로젝트는 [steipete](https://github.com/steipete)와 그의
-[imsg](https://github.com/steipete/imsg), 그리고
-[OpenClaw](https://github.com/openclaw/openclaw)에서 큰 영감을 받았습니다.
+이 프로젝트는 [steipete](https://github.com/steipete) 의
+[imsg](https://github.com/steipete/imsg) 에서 영감을 받았습니다.
 
 ## 라이선스
 
-`kbbs`는 [MIT License](LICENSE)로 제공됩니다.
+[MIT](LICENSE)
