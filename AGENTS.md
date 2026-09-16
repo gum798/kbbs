@@ -142,9 +142,10 @@ Core edits from spec §8.1 still outstanding:
 - `AXActionRunner`: `valueEquals` (exact match) does not exist, `isInputReflected`
   still accepts a substring, `didEnterEffect` still returns true on `after != before`,
   and the trace writer is still hard-wired to stderr instead of being injectable.
-- `KakaoTalkApp`: `launch`, `forceOpen`, `ensureMainWindow`, `ensureWindowReopened`,
-  `activateAndWaitForWindow` and `printHierarchy` are still present and still able to
-  bring KakaoTalk forward. Delete them; rename `activate()` to `activateForSend()`.
+`KakaoTalkApp`'s front-the-app ladder is done (`5833092`): the seven functions are
+deleted, `activate()` is `activateForSend()`, `init` no longer takes `autoLaunch`, and
+`make lint-print` fails if any of the names returns. `friendsWindow` is pre-existing
+dead code left in place — mentioned, not deleted.
 
 Assumptions A1 (does the composer expose `AXConfirm`?), A2 (do occluded windows expose a
 readable subtree?) and A3 (warm read latency) are still unmeasured — the user chose to
