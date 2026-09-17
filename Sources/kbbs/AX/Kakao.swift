@@ -51,12 +51,21 @@ struct RoomReader {
         case noContext(matchedTitle: String)
     }
 
-    func open(title: String) throws -> Opened {
+    /// `within` bounds how long the resolve may spend before giving up. A room's own
+    /// window answers in well under a second; a window that is not a room at all — the
+    /// KakaoPay tab is a web view — has no composer to find, and the search for one ran
+    /// for 86 seconds proving that before this existed.
+    func open(title: String, within: TimeInterval? = nil) throws -> Opened {
         let started = Date()
         guard let window = window(titled: title) else {
             throw OpenFailure.noWindow(candidates: kakao.windows.compactMap { $0.title })
         }
-        let resolver = MessageContextResolver(kakao: kakao, runner: runner, interactionMode: .backgroundSafe)
+        let resolver = MessageContextResolver(
+            kakao: kakao,
+            runner: runner,
+            interactionMode: .backgroundSafe,
+            deadline: within.map { started.addingTimeInterval($0) }
+        )
         guard let context = resolver.resolve(in: window) else {
             throw OpenFailure.noContext(matchedTitle: window.title ?? title)
         }

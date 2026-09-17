@@ -110,8 +110,12 @@ enum ListScreen {
             ]
         case .opening(let step):
             heading = "창 여는 중 — 「\(Width.elide(confirm.title, to: 24))」"
+            // `step` is 1-based and means "this one has started", so the running step is
+            // index step - 1. Marking it 완료 said the last step had finished while it was
+            // still running — and the last step is the wait, the one that can take a
+            // while, so the screen showed four 완료 and no reason for why it was still up.
             body = [""] + openSteps.enumerated().map { index, name in
-                let mark = index < step ? "완료" : (index == step ? "…" : "")
+                let mark = index < step - 1 ? "완료" : (index == step - 1 ? "…" : "")
                 return "  " + Width.pad(name, to: 18) + mark
             } + ["", "  건드리지 마세요."]
         case .failed(let reason):

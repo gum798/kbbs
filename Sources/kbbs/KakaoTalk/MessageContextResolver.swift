@@ -12,16 +12,36 @@ struct MessageContextResolver {
     private let useCache: Bool
     private let interactionMode: ChatWindowInteractionMode
 
+    /// A wall clock the fallbacks give up at, or nil to let them all run.
+    ///
+    /// Every traversal below already carries a node budget, and on a chat window that is
+    /// enough — the shallow paths above them answer in milliseconds. On a window with no
+    /// composer at all the budgets are instead spent proving it: measured at 86 seconds
+    /// for one call against 카카오페이, which is a web view and has no input field to
+    /// find. A node budget bounds how many elements are visited, not what each one costs.
+    ///
+    /// Checked between stages only. The search cannot be interrupted once it is inside a
+    /// traversal, so this bounds a call to roughly one traversal past the deadline — not
+    /// to the deadline itself.
+    private let deadline: Date?
+
     init(
         kakao: KakaoTalkApp,
         runner: AXActionRunner,
         useCache: Bool = true,
-        interactionMode: ChatWindowInteractionMode = .backgroundSafe
+        interactionMode: ChatWindowInteractionMode = .backgroundSafe,
+        deadline: Date? = nil
     ) {
         self.kakao = kakao
         self.runner = runner
         self.useCache = useCache
         self.interactionMode = interactionMode
+        self.deadline = deadline
+    }
+
+    private var outOfTime: Bool {
+        guard let deadline else { return false }
+        return Date() >= deadline
     }
 
     func resolve(in chatWindow: UIElement) -> MessageTranscriptContext? {
@@ -39,6 +59,10 @@ struct MessageContextResolver {
             runner.log("read: chat pane root unresolved; using window fallback")
         }
 
+        if outOfTime {
+            runner.log("read: transcript search skipped — out of time")
+            return nil
+        }
         guard let transcriptRoot = resolveTranscriptRoot(chatWindow: chatWindow, paneRoot: paneRoot, inputElement: inputElement) else {
             runner.log("read: transcript container unresolved")
             return nil
@@ -85,6 +109,10 @@ struct MessageContextResolver {
         }
 
         for attempt in 1...2 {
+            if outOfTime {
+                runner.log("read: input gave up before attempt \(attempt) — out of time")
+                return nil
+            }
             var candidates: [UIElement] = []
 
             if let focusedWindow = kakao.focusedWindow {
@@ -123,6 +151,10 @@ struct MessageContextResolver {
             runner.log("read: input not resolved on attempt \(attempt); not activating")
         }
 
+        if outOfTime {
+            runner.log("read: input gave up before the final fallback — out of time")
+            return nil
+        }
         let appCandidates = collectMessageInputCandidates(from: kakao.applicationElement, limit: 90)
         runner.log("read: input final fallback app candidates=\(appCandidates.count)")
         if let input = pickMessageInputField(from: deduplicateElements(appCandidates), in: chatWindow) {

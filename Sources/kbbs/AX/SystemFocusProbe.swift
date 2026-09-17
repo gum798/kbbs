@@ -34,15 +34,29 @@ enum SystemFocusProbe {
         return app.activate(options: [.activateIgnoringOtherApps])
     }
 
-    /// Poll — rather than sleep — until `pid` is frontmost or the deadline passes.
+    /// Poll — rather than sleep — until `pid` is frontmost, the deadline passes, or it
+    /// becomes clear this machine cannot answer the question.
     ///
     /// Activation is asynchronous and posting is not. A fixed sleep is a race; this is a
     /// check with a bound on it.
+    ///
+    /// nil is not "somebody else is in front" — it is the system-wide probe declining to
+    /// say, and it does not start working partway through a wait. Measured: where it
+    /// returns nil it returns nil for the whole timeout, sixty queries deep, and the one
+    /// caller does not gate on the answer anyway. So a run of nils ends the wait.
     @discardableResult
     static func waitForFrontmost(pid: pid_t, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
+        var unknown = 0
         while Date() < deadline {
-            if frontmostPID() == pid { return true }
+            let front = frontmostPID()
+            if front == pid { return true }
+            if front == nil {
+                unknown += 1
+                if unknown >= 4 { return false }
+            } else {
+                unknown = 0
+            }
             Thread.sleep(forTimeInterval: 0.025)
         }
         return frontmostPID() == pid

@@ -272,7 +272,7 @@ final class AXWorker: @unchecked Sendable {
 
         case .openRoom(let title):
             do {
-                let opened = try reader.open(title: title)
+                let opened = try reader.open(title: title, within: 8)
                 let token = nextToken
                 nextToken += 1
                 contexts[token] = opened
@@ -379,11 +379,20 @@ final class AXWorker: @unchecked Sendable {
         mailbox.deliver(.openingStep(title: title, step: 1), generation: currentGeneration)
         kakao.activateForSend()
         let kakaoPID = KakaoTalkApp.runningApplication?.processIdentifier
-        let front = kakaoPID.map { SystemFocusProbe.waitForFrontmost(pid: $0, timeout: 1.5) } ?? false
         // Not a gate. Being frontmost is a means, not the goal, and this check has failed
         // on a KakaoTalk that then opened the room perfectly well. What actually protects
         // the click is that its coordinates are inside KakaoTalk's own list window, which
         // is checked below, after the window is raised.
+        //
+        // What it really is, is the pause KakaoTalk needs before a click will land. So
+        // the pause is spent as a pause: the probe stops asking as soon as it is clear it
+        // cannot answer, and whatever is left of the second is slept plainly rather than
+        // burned on sixty more copies of the same unanswerable question.
+        let settled = Date().addingTimeInterval(1.0)
+        let front = kakaoPID.map { SystemFocusProbe.waitForFrontmost(pid: $0, timeout: 1.0) } ?? false
+        if !front, settled > Date() {
+            Thread.sleep(forTimeInterval: settled.timeIntervalSinceNow)
+        }
         log("전면 전환 \(front ? "확인" : "안 됨") 최전면=\(SystemFocusProbe.frontmostPID().map(String.init) ?? "모름") 카톡=\(kakaoPID.map(String.init) ?? "?")")
 
         // 2. Raise the list, then take coordinates. Bringing the app forward brings ALL
@@ -469,7 +478,7 @@ final class AXWorker: @unchecked Sendable {
             if let listWindow, !listPutAway {
                 listPutAway = Self.putAway(listWindow, label: "목록 창", log: log)
             }
-            if let opened = try? reader.open(title: title) {
+            if let opened = try? reader.open(title: title, within: 4) {
                 log("열림 확인 「\(opened.matchedTitle)」")
                 Self.putAway(opened.window, label: "대화 창", log: log)
                 let token = nextToken
@@ -483,6 +492,13 @@ final class AXWorker: @unchecked Sendable {
                 )
             }
             Thread.sleep(forTimeInterval: 0.05)
+        }
+        // Two different failures, and saying the wrong one sends the user to fix the
+        // wrong thing. A window that never appeared means the click missed; a window
+        // that appeared but would not resolve means this row is not a conversation.
+        if reader.window(titled: title) != nil {
+            log("실패: 창은 열렸으나 대화 영역이 없음")
+            return .openFailed(title: title, reason: "창은 열렸지만 대화 영역이 없습니다")
         }
         log("실패: 2.5초 안에 창이 안 열림. 지금 창=" + kakao.windows.compactMap { $0.title }.joined(separator: "/"))
         return .openFailed(title: title, reason: "창이 열리지 않았습니다")
