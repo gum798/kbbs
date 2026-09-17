@@ -515,6 +515,13 @@ struct MessageContextResolver {
 
     private func isLikelyMessageInputElement(_ element: UIElement, in window: UIElement? = nil) -> Bool {
         guard !element.isExplicitlyDisabled else { return false }
+        // It has to be in the window that was asked about. Candidates are gathered from
+        // the focused window and from the whole application as well as from this one, and
+        // an AXTextArea was accepted on its role alone — so a room with no composer of
+        // its own resolved to ANOTHER room's composer, and a send would have gone there.
+        // 카카오페이 is such a room: it has no input field, and the resolve reported
+        // success anyway after searching the rest of the app for eighty-six seconds.
+        if let window, isElsewhere(element, than: window) { return false }
         let role = element.role ?? ""
         if role == kAXTextAreaRole {
             return true
@@ -595,6 +602,22 @@ struct MessageContextResolver {
             unique.append(candidate)
         }
         return unique
+    }
+
+    /// True only on positive evidence that `element` belongs to some other window.
+    ///
+    /// Deliberately one-sided. Rejecting a real composer would break every send, so an
+    /// element that cannot be placed either way — no AXWindow, no frame — is kept. What
+    /// is thrown out is an element that says it belongs somewhere else, or that sits
+    /// outside this window's rectangle.
+    private func isElsewhere(_ element: UIElement, than window: UIElement) -> Bool {
+        if let owner = element.containingWindow {
+            return !areSameAXElement(owner, window)
+        }
+        guard let windowFrame = window.frame, let elementFrame = element.frame else {
+            return false
+        }
+        return !isElementLikelyInsideWindow(elementFrame: elementFrame, windowFrame: windowFrame)
     }
 
     private func areSameAXElement(_ lhs: UIElement, _ rhs: UIElement) -> Bool {

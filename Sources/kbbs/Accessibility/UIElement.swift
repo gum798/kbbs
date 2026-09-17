@@ -89,6 +89,16 @@ public final class UIElement: @unchecked Sendable {
         attributeOptional(kAXRoleAttribute)
     }
 
+    /// The window this element belongs to, as Accessibility itself reports it.
+    ///
+    /// Geometry is a guess — windows overlap and a frame can be stale. This is not a
+    /// guess, which matters when the answer decides where a message gets sent.
+    public var containingWindow: UIElement? {
+        let owner: AXUIElement? = attributeOptional(kAXWindowAttribute)
+            ?? attributeOptional(kAXTopLevelUIElementAttribute)
+        return owner.map(UIElement.init)
+    }
+
     public var roleDescription: String? {
         attributeOptional(kAXRoleDescriptionAttribute)
     }
@@ -282,6 +292,7 @@ public final class UIElement: @unchecked Sendable {
         var index = 0
 
         while index < queue.count {
+            if AXDeadline.passed { AXDeadline.noteTruncation(); break }
             let current = queue[index]
             index += 1
             if predicate(current) {
@@ -302,6 +313,7 @@ public final class UIElement: @unchecked Sendable {
         let nodeBudget = maxNodes ?? .max
 
         while index < queue.count && results.count < limit && visited < nodeBudget {
+            if AXDeadline.passed { AXDeadline.noteTruncation(); break }
             let current = queue[index]
             index += 1
             visited += 1
@@ -322,6 +334,7 @@ public final class UIElement: @unchecked Sendable {
         var index = 0
 
         while index < queue.count {
+            if AXDeadline.passed { AXDeadline.noteTruncation(); break }
             let current = queue[index]
             index += 1
             if predicate(current) {
@@ -349,6 +362,7 @@ public final class UIElement: @unchecked Sendable {
         var visited = 0
 
         while index < queue.count && visited < maxNodes && saturated < totalRoles {
+            if AXDeadline.passed { AXDeadline.noteTruncation(); break }
             let current = queue[index]
             index += 1
             visited += 1

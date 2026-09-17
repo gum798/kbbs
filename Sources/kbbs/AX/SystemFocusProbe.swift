@@ -42,8 +42,9 @@ enum SystemFocusProbe {
     ///
     /// nil is not "somebody else is in front" — it is the system-wide probe declining to
     /// say, and it does not start working partway through a wait. Measured: where it
-    /// returns nil it returns nil for the whole timeout, sixty queries deep, and the one
-    /// caller does not gate on the answer anyway. So a run of nils ends the wait.
+    /// returns nil it returns nil for the whole timeout, sixty queries deep. So a run of
+    /// nils ends the questioning — but not the wait, which callers depend on as the pause
+    /// before they post a key event.
     @discardableResult
     static func waitForFrontmost(pid: pid_t, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
@@ -53,7 +54,15 @@ enum SystemFocusProbe {
             if front == pid { return true }
             if front == nil {
                 unknown += 1
-                if unknown >= 4 { return false }
+                // The probe will not start working partway through a wait, so stop
+                // asking. Do NOT stop waiting: SendCommand posts a global Enter after
+                // this, and the pause is what keeps that key in KakaoTalk rather than in
+                // whatever else happens to be frontmost. The queries were the waste; the
+                // time was never the waste.
+                if unknown >= 4 {
+                    Thread.sleep(forTimeInterval: max(0, deadline.timeIntervalSinceNow))
+                    return false
+                }
             } else {
                 unknown = 0
             }

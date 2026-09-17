@@ -284,6 +284,11 @@ final class AXWorker: @unchecked Sendable {
                 )
             } catch RoomReader.OpenFailure.noWindow(let candidates) {
                 return .noWindow(title: title, candidates: candidates)
+            } catch RoomReader.OpenFailure.timedOut(_, let seconds) {
+                // Not the same as not finding them. Saying "찾지 못했습니다" for a search
+                // that ran out of time tells the user a fact about their room that
+                // nothing established.
+                return .failed(reason: "「\(title)」 를 \(Int(seconds))초 안에 읽지 못했습니다")
             } catch {
                 return .failed(reason: "「\(title)」 의 입력창과 대화 영역을 찾지 못했습니다")
             }
@@ -384,15 +389,10 @@ final class AXWorker: @unchecked Sendable {
         // the click is that its coordinates are inside KakaoTalk's own list window, which
         // is checked below, after the window is raised.
         //
-        // What it really is, is the pause KakaoTalk needs before a click will land. So
-        // the pause is spent as a pause: the probe stops asking as soon as it is clear it
-        // cannot answer, and whatever is left of the second is slept plainly rather than
-        // burned on sixty more copies of the same unanswerable question.
-        let settled = Date().addingTimeInterval(1.0)
+        // What it really is, is the pause KakaoTalk needs before a click will land, and
+        // waitForFrontmost spends the whole second either way — it just stops asking an
+        // unanswerable question sixty times on the way through.
         let front = kakaoPID.map { SystemFocusProbe.waitForFrontmost(pid: $0, timeout: 1.0) } ?? false
-        if !front, settled > Date() {
-            Thread.sleep(forTimeInterval: settled.timeIntervalSinceNow)
-        }
         log("전면 전환 \(front ? "확인" : "안 됨") 최전면=\(SystemFocusProbe.frontmostPID().map(String.init) ?? "모름") 카톡=\(kakaoPID.map(String.init) ?? "?")")
 
         // 2. Raise the list, then take coordinates. Bringing the app forward brings ALL
@@ -478,7 +478,12 @@ final class AXWorker: @unchecked Sendable {
             if let listWindow, !listPutAway {
                 listPutAway = Self.putAway(listWindow, label: "목록 창", log: log)
             }
-            if let opened = try? reader.open(title: title, within: 4) {
+            // One resolve, not a loop of them. Looping repeated an expensive search that
+            // had already failed for a reason, and the reason does not change in 50ms.
+            // The pause first is for a window KakaoTalk has made but not yet filled.
+            Thread.sleep(forTimeInterval: 0.3)
+            do {
+                let opened = try reader.open(title: title, within: 10)
                 log("열림 확인 「\(opened.matchedTitle)」")
                 Self.putAway(opened.window, label: "대화 창", log: log)
                 let token = nextToken
@@ -490,15 +495,13 @@ final class AXWorker: @unchecked Sendable {
                     matchedTitle: opened.matchedTitle,
                     elapsed: 0
                 )
+            } catch RoomReader.OpenFailure.timedOut(_, let seconds) {
+                log("실패: 창은 열렸으나 \(Int(seconds))초 안에 못 읽음")
+                return .openFailed(title: title, reason: "창은 열렸지만 \(Int(seconds))초 안에 읽지 못했습니다")
+            } catch {
+                log("실패: 창은 열렸으나 대화 영역이 없음")
+                return .openFailed(title: title, reason: "창은 열렸지만 대화 영역이 없습니다")
             }
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        // Two different failures, and saying the wrong one sends the user to fix the
-        // wrong thing. A window that never appeared means the click missed; a window
-        // that appeared but would not resolve means this row is not a conversation.
-        if reader.window(titled: title) != nil {
-            log("실패: 창은 열렸으나 대화 영역이 없음")
-            return .openFailed(title: title, reason: "창은 열렸지만 대화 영역이 없습니다")
         }
         log("실패: 2.5초 안에 창이 안 열림. 지금 창=" + kakao.windows.compactMap { $0.title }.joined(separator: "/"))
         return .openFailed(title: title, reason: "창이 열리지 않았습니다")

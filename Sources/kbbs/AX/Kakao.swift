@@ -49,13 +49,19 @@ struct RoomReader {
         case noWindow(candidates: [String])
         /// The window is there, but its input box and transcript would not resolve.
         case noContext(matchedTitle: String)
+        /// The window is there and the search for its parts ran out of time. Different
+        /// from noContext: this says nothing about whether the room has them.
+        case timedOut(matchedTitle: String, seconds: TimeInterval)
     }
 
-    /// `within` bounds how long the resolve may spend before giving up. A room's own
-    /// window answers in well under a second; a window that is not a room at all — the
-    /// KakaoPay tab is a web view — has no composer to find, and the search for one ran
-    /// for 86 seconds proving that before this existed.
-    func open(title: String, within: TimeInterval? = nil) throws -> Opened {
+    /// `within` bounds how long the resolve may spend before giving up.
+    ///
+    /// Not optional, and not defaulted to "no limit": the one call site that forgot to
+    /// pass it would be the one that hangs. A room's own window answers in well under a
+    /// second; 카카오페이 has no composer of its own, and the search for one ran 86
+    /// seconds before failing to find it — and then reported success, having settled on
+    /// a composer belonging to a different window.
+    func open(title: String, within: TimeInterval = 8) throws -> Opened {
         let started = Date()
         guard let window = window(titled: title) else {
             throw OpenFailure.noWindow(candidates: kakao.windows.compactMap { $0.title })
@@ -64,9 +70,20 @@ struct RoomReader {
             kakao: kakao,
             runner: runner,
             interactionMode: .backgroundSafe,
-            deadline: within.map { started.addingTimeInterval($0) }
+            deadline: started.addingTimeInterval(within)
         )
-        guard let context = resolver.resolve(in: window) else {
+        // Two bounds, because they stop different things. The resolver's own deadline
+        // skips whole stages it knows it cannot afford; AXDeadline stops a traversal
+        // inside a stage that has already begun, which is where the 86 seconds were.
+        let outcome = AXDeadline.within(within) { resolver.resolve(in: window) }
+        // A search that was cut short did not answer the question — it ran out of time
+        // while answering it. Taking what it had reached is how a room gets bound to the
+        // wrong transcript container, or to another window's composer, and then keeps
+        // that binding for the life of the room because nothing ever re-resolves it.
+        guard !outcome.truncated else {
+            throw OpenFailure.timedOut(matchedTitle: window.title ?? title, seconds: within)
+        }
+        guard let context = outcome.value else {
             throw OpenFailure.noContext(matchedTitle: window.title ?? title)
         }
         return Opened(
