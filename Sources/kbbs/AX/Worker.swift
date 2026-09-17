@@ -353,8 +353,7 @@ final class AXWorker: @unchecked Sendable {
         var listPutAway = false
         defer {
             if let listWindow, !listPutAway {
-                try? listWindow.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
-                log("목록 창 최소화")
+                Self.putAway(listWindow, label: "목록 창", log: log)
             }
             if let terminal { SystemFocusProbe.activate(pid: terminal) }
         }
@@ -456,21 +455,23 @@ final class AXWorker: @unchecked Sendable {
                 Thread.sleep(forTimeInterval: 0.05)
                 continue
             }
-            // The window exists, so the click landed — which is the proof needed to put
-            // the list away. Doing it here rather than in the defer takes it off the
-            // screen before the resolve below, which is the slow half of this.
+            // The window exists, so the click landed. That is the proof needed to put
+            // both windows away, and it comes before the resolve rather than after it —
+            // the resolve is the slow half and neither window is needed for it. Measured:
+            // a minimized window still reads, and still takes an injected composer value
+            // with the 전송 button enabling.
+            //
+            // The chat window goes first, while KakaoTalk has not yet settled focus onto
+            // the window it just made.
+            if let chatWindow = reader.window(titled: title) {
+                Self.putAway(chatWindow, label: "대화 창", log: log)
+            }
             if let listWindow, !listPutAway {
-                try? listWindow.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
-                listPutAway = true
-                log("목록 창 최소화")
+                listPutAway = Self.putAway(listWindow, label: "목록 창", log: log)
             }
             if let opened = try? reader.open(title: title) {
-                // Measured: a minimized window still reads, and still takes an injected
-                // composer value with the 전송 button enabling. So the window kbbs had to
-                // bring up gets put away again immediately instead of piling onto the
-                // screen for the rest of the session.
                 log("열림 확인 「\(opened.matchedTitle)」")
-                try? opened.window.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
+                Self.putAway(opened.window, label: "대화 창", log: log)
                 let token = nextToken
                 nextToken += 1
                 contexts[token] = opened
@@ -517,6 +518,30 @@ final class AXWorker: @unchecked Sendable {
     /// Whether this row element still displays the conversation it was found for.
     ///
     /// Cheap on purpose — a handful of queries against one row, next to a full re-scan.
+    /// Minimize a window, and check that it went.
+    ///
+    /// `AXMinimized` is settable, and setting it returns success whether or not anything
+    /// happened — the same lie as the 전송 button and the scroll actions. On a window
+    /// KakaoTalk has only just built the write lands on nothing, which is how a chat
+    /// window opened by kbbs was left sitting on the user's screen while the list beside
+    /// it, minimized by the identical call, went away.
+    ///
+    /// Returns as soon as the read-back agrees, so the common case costs one extra
+    /// attribute read and nothing else.
+    @discardableResult
+    static func putAway(_ window: UIElement, label: String, log: (String) -> Void) -> Bool {
+        for attempt in 1...3 {
+            try? window.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
+            if (window.attributeOptional(kAXMinimizedAttribute) ?? false) as Bool {
+                log("\(label) 최소화\(attempt > 1 ? " (\(attempt)번째)" : "")")
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.12)
+        }
+        log("\(label) 최소화 실패 — 창이 그대로 남음")
+        return false
+    }
+
     static func row(_ row: UIElement, stillShows title: String) -> Bool {
         let texts = row.findAll(role: kAXStaticTextRole, limit: 6, maxNodes: 60)
         return texts.contains { ($0.stringValue ?? $0.title ?? "") == title }
