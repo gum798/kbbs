@@ -477,13 +477,15 @@ final class AXWorker: @unchecked Sendable {
             // a minimized window still reads, and still takes an injected composer value
             // with the 전송 button enabling.
             //
-            // The chat window goes first, while KakaoTalk has not yet settled focus onto
-            // the window it just made.
-            if let chatWindow = reader.window(titled: title) {
-                Self.putAway(chatWindow, label: "대화 창", log: log)
-            }
+            // The LIST goes first. It is the window kbbs raised over the user's screen,
+            // so it is the one they are looking at, and putting the chat window away
+            // ahead of it left it up through that window's retry ladder — measured at
+            // half a second of a list the user did not ask to see.
             if let listWindow, !listPutAway {
                 listPutAway = Self.putAway(listWindow, label: "목록 창", log: log)
+            }
+            if let chatWindow = reader.window(titled: title) {
+                Self.putAway(chatWindow, label: "대화 창", log: log)
             }
             // One resolve, not a loop of them. Looping repeated an expensive search that
             // had already failed for a reason, and the reason does not change in 50ms.
