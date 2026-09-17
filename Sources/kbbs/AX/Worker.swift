@@ -363,18 +363,24 @@ final class AXWorker: @unchecked Sendable {
             if let terminal { SystemFocusProbe.activate(pid: terminal) }
         }
 
-        // 0. Which row, asked while the list is still out of sight.
+        // 0. Is this room in the list at all? Asked before anything is put on screen.
         //
-        // A minimized window answers what its rows SAY but not where they ARE — a handle
-        // bound there reports frame=nil, which is the bug 9d03b24 fixed by moving the
-        // binding after the restore. Moving the whole scan after the restore was the
-        // wrong lesson from that: only the frame has to wait. So the expensive question
-        // is settled here, off-screen, and the frame is taken again below once the list
-        // is up. If this comes back empty nothing is lost — the path below still runs.
-        let presumed = listWindow.flatMap { window -> UIElement? in
-            let (count, found) = scanner.findRow(titled: title, in: window, limit: 60)
-            log("사전 스캔 \(count)행 \(found == nil ? "— 그 방 없음" : "— 행 확보")")
-            return found
+        // The handle it finds is NOT reusable. Measured: a row bound while the list is
+        // minimized still reports no frame 1.25 seconds after the window is back, so it
+        // never becomes clickable and the scan below has to fetch the row again. That is
+        // the whole of 9d03b24 — coordinates come only from an element taken while the
+        // window is on screen, and the click needs them because it is a screen-position
+        // mouse event, not something the row itself can be asked to do.
+        //
+        // What the answer is good for is not raising KakaoTalk over the user's screen to
+        // look for a room that demonstrably is not there. Sixty rows read and no match is
+        // an answer; one row read is a list that has not drawn yet and is not.
+        if let listWindow {
+            let (count, found) = scanner.findRow(titled: title, in: listWindow, limit: 60)
+            log("사전 스캔 \(count)행 \(found == nil ? "— 그 방 없음" : "— 있음")")
+            if found == nil, count > 2 {
+                return .openFailed(title: title, reason: "목록에서 그 방을 찾지 못했습니다")
+            }
         }
 
         // 1. Front. KakaoTalk has to be frontmost for a click to reach it, and the list
@@ -405,22 +411,12 @@ final class AXWorker: @unchecked Sendable {
             try? listWindow.performAction(kAXRaiseAction)
             Thread.sleep(forTimeInterval: 0.2)
         }
-        // 2b. Bind the row, now that there is a frame to bind. The pre-scan's handle is
-        //     kept if it still has a frame and still shows this room — the list reorders
-        //     on every message, so that is not a formality. Otherwise the list is read
-        //     again, which is what this used to do every single time.
+        // 2b. Bind the row, now that there is a frame to bind — a fresh fetch, because
+        //     that is the only kind that carries coordinates. The title is checked again
+        //     against the live row: the list reorders on every message, so the row at a
+        //     position is not necessarily the room that was there a moment ago.
         let row: UIElement
-        // Which of the two checks turned the pre-scan handle down, because so far it is
-        // always turned down and the answer decides whether the pre-scan is worth having.
-        if let presumed, presumed.frame == nil {
-            log("사전 스캔 행 버림 — 좌표 없음")
-        } else if let presumed, !Self.row(presumed, stillShows: title) {
-            log("사전 스캔 행 버림 — 다른 방을 표시")
-        }
-        if let presumed, presumed.frame != nil, Self.row(presumed, stillShows: title) {
-            row = presumed
-            log("사전 스캔 행 사용")
-        } else if let listWindow, let fresh = ListWindowRestore.rowAfterRestoring(
+        if let listWindow, let fresh = ListWindowRestore.rowAfterRestoring(
             titled: title,
             listWindow: listWindow,
             scanner: scanner,
