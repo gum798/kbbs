@@ -32,6 +32,24 @@ enum Hotkey: Equatable {
         "ㅓ": "J",
     ]
 
+    /// The same keys as conjoining jamo.
+    ///
+    /// Unicode spells a Korean consonant twice: U+3149 is the one a committed IME hands
+    /// over, U+110D the one that belongs inside a syllable. A terminal that passes on a
+    /// consonant the IME is still composing sends the second, and the table above does
+    /// not contain it — the key then does nothing at all, which is exactly what it looks
+    /// like from the outside.
+    private static let conjoining: [Character: Character] = [
+        "\u{1107}": "Q", "\u{1108}": "Q",
+        "\u{110C}": "W", "\u{110D}": "W",
+        "\u{1100}": "R", "\u{1101}": "R",
+        "\u{1166}": "P", "\u{1168}": "P",
+        "\u{116E}": "N",
+        "\u{1102}": "S",
+        "\u{1161}": "K",
+        "\u{1165}": "J",
+    ]
+
     /// `composerEmpty` is false only on a screen with something typed into it, where a
     /// letter command would cost the user their text. Ctrl-C ignores it.
     ///
@@ -55,7 +73,8 @@ enum Hotkey: Equatable {
         guard composerEmpty else { return nil }
 
         var key = key
-        if allowingHangul, case .char(let typed) = key, let latin = jamo[typed] {
+        if allowingHangul, case .char(let typed) = key,
+           let latin = jamo[typed] ?? conjoining[typed] {
             key = .char(latin)
         }
 

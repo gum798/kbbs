@@ -93,4 +93,27 @@ final class HotkeyTests: XCTestCase {
         XCTAssertNil(Hotkey.command(for: .char("나"), allowingHangul: true))
     }
 
+
+    // MARK: - The other spelling of a jamo
+
+    /// Reported from a running session: back on the list after a conversation, W closed
+    /// the window and ㅉ did nothing. Both are the same key; what differs is which of
+    /// Unicode's two spellings of ㅉ the terminal handed over.
+    func testAConjoiningConsonantIsTheSameHotkey() {
+        XCTAssertEqual(Hotkey.command(for: .char("\u{110D}"), allowingHangul: true), .closeWindow)
+        XCTAssertEqual(Hotkey.command(for: .char("\u{110C}"), allowingHangul: true), .closeWindow)
+        XCTAssertEqual(Hotkey.command(for: .char("\u{1101}"), allowingHangul: true), .refresh)
+        XCTAssertEqual(Hotkey.command(for: .char("\u{1107}"), allowingHangul: true), .quit)
+    }
+
+    func testAConjoiningVowelIsTheSameHotkey() {
+        XCTAssertEqual(Hotkey.command(for: .char("\u{1166}"), allowingHangul: true), .pagePrevious)
+        XCTAssertEqual(Hotkey.command(for: .char("\u{116E}"), allowingHangul: true), .pageNext)
+    }
+
+    /// The conversation screen has text to type, so neither spelling may be a command.
+    func testAConjoiningJamoIsStillTextInAConversation() {
+        XCTAssertNil(Hotkey.command(for: .char("\u{110D}")))
+        XCTAssertNil(Hotkey.command(for: .char("\u{1100}")))
+    }
 }
