@@ -459,6 +459,17 @@ final class AXWorker: @unchecked Sendable {
         mailbox.deliver(.openingStep(title: title, step: 3), generation: currentGeneration)
         runner.mouseDoubleClick(at: point, label: "open row")
 
+        // The list has done its job. It is not needed to wait for the window, to resolve
+        // it, or to read it, and it is the window sitting over the user's screen — so it
+        // goes now rather than a second from now, once the window has proved the click
+        // landed. The events are already out: postMouseClicks sleeps 40ms past the last
+        // mouseUp before it returns, and the pause below is margin on top of that for
+        // KakaoTalk to hit-test them while the window is still where they were aimed.
+        Thread.sleep(forTimeInterval: 0.15)
+        if let listWindow {
+            listPutAway = Self.putAway(listWindow, label: "목록 창", log: log)
+        }
+
         // 4. Wait for the window to actually appear, then resolve it like any other.
         mailbox.deliver(.openingStep(title: title, step: 4), generation: currentGeneration)
         let deadline = Date().addingTimeInterval(2.5)
@@ -477,10 +488,8 @@ final class AXWorker: @unchecked Sendable {
             // a minimized window still reads, and still takes an injected composer value
             // with the 전송 button enabling.
             //
-            // The LIST goes first. It is the window kbbs raised over the user's screen,
-            // so it is the one they are looking at, and putting the chat window away
-            // ahead of it left it up through that window's retry ladder — measured at
-            // half a second of a list the user did not ask to see.
+            // The list is normally already away by now; this catches the one case where
+            // the attempt straight after the click did not take.
             if let listWindow, !listPutAway {
                 listPutAway = Self.putAway(listWindow, label: "목록 창", log: log)
             }
