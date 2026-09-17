@@ -557,10 +557,15 @@ struct Loop {
         roomToken = nil
         roomState = nil
         nextRoomPoll = nil
-        nextListPoll = Date().addingTimeInterval(Self.listPoll)
+        // Due immediately rather than in fifteen seconds: the room just read is the one
+        // whose unread count and window state the list is now most likely wrong about.
+        // serviceTimers only advances this when it actually submits, so a busy worker
+        // means it waits rather than skipping the refresh.
+        nextListPoll = Date()
         readFailures = 0
         screen = .list
         abandonInFlight()
+        say("읽는 중…")
         lastFrame = []
     }
 
