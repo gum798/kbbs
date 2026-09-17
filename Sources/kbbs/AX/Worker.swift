@@ -410,6 +410,13 @@ final class AXWorker: @unchecked Sendable {
         //     on every message, so that is not a formality. Otherwise the list is read
         //     again, which is what this used to do every single time.
         let row: UIElement
+        // Which of the two checks turned the pre-scan handle down, because so far it is
+        // always turned down and the answer decides whether the pre-scan is worth having.
+        if let presumed, presumed.frame == nil {
+            log("사전 스캔 행 버림 — 좌표 없음")
+        } else if let presumed, !Self.row(presumed, stillShows: title) {
+            log("사전 스캔 행 버림 — 다른 방을 표시")
+        }
         if let presumed, presumed.frame != nil, Self.row(presumed, stillShows: title) {
             row = presumed
             log("사전 스캔 행 사용")

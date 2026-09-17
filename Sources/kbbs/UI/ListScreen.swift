@@ -119,7 +119,10 @@ enum ListScreen {
                 return "  " + Width.pad(name, to: 18) + mark
             } + ["", "  건드리지 마세요."]
         case .failed(let reason):
-            heading = "[실패] 창을 열지 못했습니다 — \(Width.elide(reason, to: 30))"
+            // The reason is the heading. Prefixing it with "창을 열지 못했습니다" produced
+            // "창을 열지 못했습니다 — 창은 열렸지만 대화 영역이 없…", which contradicts
+            // itself and then runs out of room mid-word.
+            heading = "[실패] \(Width.elide(reason, to: 44))"
             body = [
                 "",
                 "카카오톡에서 직접 연 뒤 R 을 누르세요.",

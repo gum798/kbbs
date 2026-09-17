@@ -464,12 +464,15 @@ struct MessageContextResolver {
     /// returned the transcript's AXTable — and then injection wrote into a table, reads
     /// filtered rows against a table's frame, and nothing said anything was wrong.
     private func pickMessageInputField(from fields: [UIElement], in window: UIElement) -> UIElement? {
-        fields
+        // Scored once each, then sorted on the numbers. The comparator used to re-derive
+        // both scores on every comparison — n log n scorings for an n-element list, and
+        // every scoring reads a handful of Accessibility attributes. With the ninety
+        // candidates the app-wide fallback collects that is over a thousand queries at
+        // five to ten milliseconds apiece, spent entirely on re-answering.
+        let scored = fields
             .filter { isLikelyMessageInputElement($0, in: window) }
-            .sorted { lhs, rhs in
-                scoreMessageInputCandidate(lhs, in: window) > scoreMessageInputCandidate(rhs, in: window)
-            }
-            .first
+            .map { (element: $0, score: scoreMessageInputCandidate($0, in: window)) }
+        return scored.sorted { $0.score > $1.score }.first?.element
     }
 
     private func scoreMessageInputCandidate(_ element: UIElement, in window: UIElement) -> Double {
