@@ -339,7 +339,10 @@ final class AXWorker: @unchecked Sendable {
     /// Four steps, each reported so a click that never lands is visible as the step it
     /// stopped on. The terminal gets the front back at the end whatever happened.
     private func openWindow(titled title: String) -> AXResult {
-        func log(_ line: String) { TTYOut.log("[open] \(line)") }
+        let openStarted = Date()
+        func log(_ line: String) {
+            TTYOut.log(String(format: "[open %5.0fms] ", Date().timeIntervalSince(openStarted) * 1000) + line)
+        }
         log("요청 「\(title)」 보유행=\(rows.count) 목록창=\(listWindow == nil ? "없음" : "있음")")
         let terminal = SystemFocusProbe.frontmostPID()
         // Put KakaoTalk back the way it was found: the list is raised only so the click
@@ -358,24 +361,22 @@ final class AXWorker: @unchecked Sendable {
         // It may have been minimized by a previous open; raising a minimized window does
         // nothing, so it comes back first — and its rows are re-read once it has redrawn,
         // because the ones held from before point at where it used to be.
-        if let listWindow {
-            let found = ListWindowRestore.rowsAfterRestoring(
-                listWindow: listWindow,
+        // Bound only now, and only this one. A row handle captured while the list was
+        // minimized reports no frame at all, and the coordinate guard then refuses a
+        // click it should have been able to make — the list reorders on every message,
+        // so the handle has to come from the scan that just ran, not from whatever was
+        // held before. Reading the other fifty-nine rows to get at this one was most of
+        // what an open cost.
+        let restored = listWindow.flatMap { window in
+            ListWindowRestore.rowAfterRestoring(
+                titled: title,
+                listWindow: window,
                 scanner: scanner,
                 limit: 60,
                 log: log
             )
-            if found.count > 2 {
-                rows = Dictionary(found.map { ($0.discovery.title, $0.element) }, uniquingKeysWith: { first, _ in first })
-                log("복원 후 재스캔 \(found.count)개")
-            }
         }
-
-        // Bound only now. A row handle captured while the list was minimized reports no
-        // frame at all, and the coordinate guard then refuses a click it should have been
-        // able to make — the list reorders on every message, so the handle has to come
-        // from the scan that just ran, not from whatever was held before.
-        guard let row = rows[title] else {
+        guard let row = restored ?? rows[title] else {
             log("실패: 행 없음")
             return .openFailed(title: title, reason: "목록에서 그 방을 찾지 못했습니다")
         }
@@ -431,7 +432,11 @@ final class AXWorker: @unchecked Sendable {
         mailbox.deliver(.openingStep(title: title, step: 4), generation: currentGeneration)
         let deadline = Date().addingTimeInterval(2.5)
         while Date() < deadline {
-            if let opened = try? reader.open(title: title) {
+            // The window first, which is one attribute per window, and only then the
+            // full resolve. A resolve against a window that has not appeared yet walks
+            // the app twice — once to miss, once to list what it saw instead — and this
+            // loop used to do that twenty-five times before giving up.
+            if reader.window(titled: title) != nil, let opened = try? reader.open(title: title) {
                 // Measured: a minimized window still reads, and still takes an injected
                 // composer value with the 전송 button enabling. So the window kbbs had to
                 // bring up gets put away again immediately instead of piling onto the
@@ -448,7 +453,7 @@ final class AXWorker: @unchecked Sendable {
                     elapsed: 0
                 )
             }
-            Thread.sleep(forTimeInterval: 0.1)
+            Thread.sleep(forTimeInterval: 0.05)
         }
         log("실패: 2.5초 안에 창이 안 열림. 지금 창=" + kakao.windows.compactMap { $0.title }.joined(separator: "/"))
         return .openFailed(title: title, reason: "창이 열리지 않았습니다")

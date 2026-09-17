@@ -130,6 +130,12 @@ struct ChatListSnapshotItem {
     let discovery: ChatListDiscovery
 }
 
+/// A row and the one thing opening it needs to know.
+struct ChatRowHandle {
+    let element: UIElement
+    let title: String
+}
+
 struct ChatListScanner {
     func scan(in window: UIElement, limit: Int, trace: ((String) -> Void)? = nil) -> [ChatListSnapshotItem] {
         guard let container = resolveChatListContainer(in: window, trace: trace) else {
@@ -149,18 +155,48 @@ struct ChatListScanner {
         for (index, row) in rows.enumerated() {
             let title = extractTitle(from: row, trace: trace)
             let preview = extractPreview(from: row, title: title, trace: trace)
+            // Walked once and handed to both. The badge and the timestamp were each
+            // running this same uncached search over the row's subtree, which made the
+            // two of them the most expensive thing in a sixty-row scan.
+            let texts = row.findAll(role: kAXStaticTextRole, limit: 16, maxNodes: 100)
             let discovery = ChatListDiscovery(
                 title: title,
                 lastMessage: preview,
                 listIndex: index,
-                unreadCount: extractUnreadCount(from: row),
-                timeLabel: extractTimeLabel(from: row)
+                unreadCount: unreadCount(in: texts),
+                timeLabel: timeLabel(in: texts)
             )
             snapshots.append(ChatListSnapshotItem(element: row, discovery: discovery))
         }
 
         trace?("chats: resolved rows=\(snapshots.count)")
         return snapshots
+    }
+
+    /// Rows and their titles, and nothing else.
+    ///
+    /// Opening a window asks the list one question: which row is this room. The preview,
+    /// the badge and the timestamp each cost their own walk of the row's subtree and the
+    /// open path throws all three away.
+    func scanRows(in window: UIElement, limit: Int, trace: ((String) -> Void)? = nil) -> [ChatRowHandle] {
+        guard let container = resolveChatListContainer(in: window, trace: trace) else { return [] }
+        return collectChatItems(from: container, limit: limit).map { row in
+            ChatRowHandle(element: row, title: extractTitle(from: row, trace: trace))
+        }
+    }
+
+    /// The row for one title, reading as little of the list as it can get away with.
+    ///
+    /// `rowCount` is reported even when the title is not among them, because the caller
+    /// has to tell "the list has not redrawn yet" — where the count is one or zero —
+    /// from "that room is genuinely not in the list".
+    func findRow(titled title: String, in window: UIElement, limit: Int) -> (rowCount: Int, row: UIElement?) {
+        guard let container = resolveChatListContainer(in: window) else { return (0, nil) }
+        let rows = collectChatItems(from: container, limit: limit)
+        for row in rows where extractTitle(from: row) == title {
+            return (rows.count, row)
+        }
+        return (rows.count, nil)
     }
 
     func warmup(in window: UIElement, trace: ((String) -> Void)? = nil) -> [AXPathSlot] {
@@ -267,8 +303,7 @@ struct ChatListScanner {
 
     /// The badge. KakaoTalk marks it with identifier "Count Label", which titleText and
     /// previewText both reject explicitly — so the node is already being looked at.
-    private func extractUnreadCount(from row: UIElement) -> Int? {
-        let nodes = row.findAll(role: kAXStaticTextRole, limit: 16, maxNodes: 100)
+    private func unreadCount(in nodes: [UIElement]) -> Int? {
         for node in nodes where node.identifier == "Count Label" {
             let text = normalizedText(node.stringValue) ?? normalizedText(node.title)
             if let text, let count = ChatTextNormalizer.unreadCount(from: text) {
@@ -288,8 +323,7 @@ struct ChatListScanner {
 
     /// The row timestamp — "21:03", "어제", "3일". Filtered out of title and preview by
     /// isTimeLikeValue, which is exactly the predicate that identifies it here.
-    private func extractTimeLabel(from row: UIElement) -> String? {
-        let nodes = row.findAll(role: kAXStaticTextRole, limit: 16, maxNodes: 100)
+    private func timeLabel(in nodes: [UIElement]) -> String? {
         for node in nodes {
             guard let text = normalizedText(node.stringValue) ?? normalizedText(node.title) else { continue }
             if ChatTextNormalizer.isTimeLikeValue(text) {

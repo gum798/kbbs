@@ -57,7 +57,7 @@ struct OpenCommand: ParsableCommand {
             limit: 60
         ) { print("  \($0)") }
         print("목록 스캔      \(items.count)개")
-        guard let row = items.first(where: { $0.discovery.title == room })?.element else {
+        guard let row = items.first(where: { $0.title == room })?.element else {
             print("「\(room)」 행이 목록에 없습니다.")
             throw ExitCode.failure
         }
