@@ -18,9 +18,14 @@ enum Hotkey: Equatable {
 
     /// The 2-set Korean layout, for the screens that have no text to type.
     ///
-    /// With the IME in Korean the R key sends ㄱ, or ㄲ with Shift — the letter never
-    /// arrives at all. Shift doubles a consonant and leaves a vowel alone, so each key has
+    /// With the IME in Korean the R key sends ㄱ, or ㄲ with Shift — the Latin letter
+    /// never arrives. Shift doubles a consonant and leaves a vowel alone, so each key has
     /// two spellings and both are here.
+    ///
+    /// This is a courtesy, not a reliable path: the IME hands a jamo over only once the
+    /// syllable it belongs to is finished, so a lone consonant sits in the input method
+    /// until the NEXT key is pressed and then arrives late, behind it. The Ctrl aliases
+    /// below are the ones that work at the moment they are pressed.
     private static let jamo: [Character: Character] = [
         "ㅂ": "Q", "ㅃ": "Q",
         "ㅈ": "W", "ㅉ": "W",
@@ -32,30 +37,15 @@ enum Hotkey: Equatable {
         "ㅓ": "J",
     ]
 
-    /// The same keys as conjoining jamo.
-    ///
-    /// Unicode spells a Korean consonant twice: U+3149 is the one a committed IME hands
-    /// over, U+110D the one that belongs inside a syllable. A terminal that passes on a
-    /// consonant the IME is still composing sends the second, and the table above does
-    /// not contain it — the key then does nothing at all, which is exactly what it looks
-    /// like from the outside.
-    private static let conjoining: [Character: Character] = [
-        "\u{1107}": "Q", "\u{1108}": "Q",
-        "\u{110C}": "W", "\u{110D}": "W",
-        "\u{1100}": "R", "\u{1101}": "R",
-        "\u{1166}": "P", "\u{1168}": "P",
-        "\u{116E}": "N",
-        "\u{1102}": "S",
-        "\u{1161}": "K",
-        "\u{1165}": "J",
-    ]
-
     /// `composerEmpty` is false only on a screen with something typed into it, where a
     /// letter command would cost the user their text. Ctrl-C ignores it.
     ///
     /// `allowingHangul` is for screens with nothing to type: there a jamo can only have
     /// come from a hotkey. The conversation screen must leave it false — ㄱ there is the
     /// first letter of a word.
+    ///
+    /// The Ctrl aliases need no such flag. They are already behind `composerEmpty`, and
+    /// a control byte is never text.
     static func command(for key: Key, composerEmpty: Bool = true, allowingHangul: Bool = false) -> Hotkey? {
         switch key {
         case .control("c"):
@@ -73,8 +63,14 @@ enum Hotkey: Equatable {
         guard composerEmpty else { return nil }
 
         var key = key
-        if allowingHangul, case .char(let typed) = key,
-           let latin = jamo[typed] ?? conjoining[typed] {
+        // Ctrl+letter is the letter — the only spelling of these commands a Korean IME
+        // does not delay. Measured with `kbbs keys`: ㅉ does reach the program as E3 85
+        // 89, but not when it is pressed; the IME holds it as an unfinished syllable and
+        // releases it behind whatever key comes next. Pressing it once therefore looks
+        // like nothing happened. A control byte is never composed.
+        if case .control(let typed) = key, let letter = typed.uppercased().first {
+            key = .char(letter)
+        } else if allowingHangul, case .char(let typed) = key, let latin = jamo[typed] {
             key = .char(latin)
         }
 

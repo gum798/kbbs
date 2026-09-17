@@ -94,26 +94,37 @@ final class HotkeyTests: XCTestCase {
     }
 
 
-    // MARK: - The other spelling of a jamo
+    // MARK: - The keys a Korean IME cannot swallow
 
-    /// Reported from a running session: back on the list after a conversation, W closed
-    /// the window and ㅉ did nothing. Both are the same key; what differs is which of
-    /// Unicode's two spellings of ㅉ the terminal handed over.
-    func testAConjoiningConsonantIsTheSameHotkey() {
-        XCTAssertEqual(Hotkey.command(for: .char("\u{110D}"), allowingHangul: true), .closeWindow)
-        XCTAssertEqual(Hotkey.command(for: .char("\u{110C}"), allowingHangul: true), .closeWindow)
-        XCTAssertEqual(Hotkey.command(for: .char("\u{1101}"), allowingHangul: true), .refresh)
-        XCTAssertEqual(Hotkey.command(for: .char("\u{1107}"), allowingHangul: true), .quit)
+    /// Measured with `kbbs keys`: ㅉ does arrive, as E3 85 89 — but only once the
+    /// syllable is finished, which for a lone consonant means when the next key is
+    /// pressed. Pressing it once looks like nothing happened. A control byte is never
+    /// composed, so these fire when they are pressed.
+    func testControlLetterIsTheLetter() {
+        XCTAssertEqual(Hotkey.command(for: .control("w")), .closeWindow)
+        XCTAssertEqual(Hotkey.command(for: .control("r")), .refresh)
+        XCTAssertEqual(Hotkey.command(for: .control("n")), .pageNext)
+        XCTAssertEqual(Hotkey.command(for: .control("p")), .pagePrevious)
+        XCTAssertEqual(Hotkey.command(for: .control("s")), .showWindow)
+        XCTAssertEqual(Hotkey.command(for: .control("q")), .quit)
     }
 
-    func testAConjoiningVowelIsTheSameHotkey() {
-        XCTAssertEqual(Hotkey.command(for: .char("\u{1166}"), allowingHangul: true), .pagePrevious)
-        XCTAssertEqual(Hotkey.command(for: .char("\u{116E}"), allowingHangul: true), .pageNext)
+    /// It needs no Hangul flag: these work on the conversation screen too, which is why
+    /// they are worth having — W there is unreachable with a Korean IME as well.
+    func testControlLetterWorksWithoutTheHangulFlag() {
+        XCTAssertEqual(Hotkey.command(for: .control("w"), allowingHangul: false), .closeWindow)
     }
 
-    /// The conversation screen has text to type, so neither spelling may be a command.
-    func testAConjoiningJamoIsStillTextInAConversation() {
-        XCTAssertNil(Hotkey.command(for: .char("\u{110D}")))
-        XCTAssertNil(Hotkey.command(for: .char("\u{1100}")))
+    /// But not over a composer with something in it. Ctrl-W is a word-delete everywhere
+    /// else; closing a window out from under a half-typed message is not a trade the
+    /// user asked for.
+    func testControlLetterDoesNotFireOverTypedText() {
+        XCTAssertNil(Hotkey.command(for: .control("w"), composerEmpty: false))
+    }
+
+    /// The two that were already spoken for keep their meanings.
+    func testTheReservedControlKeysAreUnchanged() {
+        XCTAssertEqual(Hotkey.command(for: .control("c"), composerEmpty: false), .quit)
+        XCTAssertEqual(Hotkey.command(for: .control("l")), .repaint)
     }
 }
