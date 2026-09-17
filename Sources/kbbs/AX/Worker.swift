@@ -322,7 +322,13 @@ final class AXWorker: @unchecked Sendable {
             guard let window = kakao.windows.first(where: { $0.role == kAXWindowRole && $0.title == title }) else {
                 return .failed(reason: "「\(title)」 창이 없습니다")
             }
+            // Un-minimizing a window of a hidden application shows nothing. S is the one
+            // key whose whole job is to put something on the user's screen, so it has to
+            // undo both — and raise it, or it comes back behind the others.
+            Self.setHidden(false, kakao: kakao) { TTYOut.log("[show] \($0)") }
             try? window.setAttribute(kAXMinimizedAttribute, value: false as CFBoolean)
+            kakao.activateForSend()
+            try? window.performAction(kAXRaiseAction)
             return .shown(title: title)
 
         case .closeWindow(let title):
@@ -350,41 +356,43 @@ final class AXWorker: @unchecked Sendable {
         }
         log("요청 「\(title)」 보유행=\(rows.count) 목록창=\(listWindow == nil ? "없음" : "있음")")
         let terminal = SystemFocusProbe.frontmostPID()
-        // Put KakaoTalk back the way it was found: the list is raised only so the click
-        // can land on it, and leaving it sitting over the user's screen afterwards is the
-        // part they notice. Hiding the whole app does not work — NSRunningApplication.hide
-        // on another process returns without hiding anything — so the list window is
-        // minimized, which does. The net only fires if step 4 did not already get there.
+        // Put KakaoTalk back out of sight: it is brought forward only so the click can
+        // land, and leaving it over the user's screen afterwards is the part they notice.
+        // The whole application is hidden rather than its windows minimized one at a
+        // time — see setHidden. The net only fires if the click step did not get there.
         var listPutAway = false
         defer {
-            if let listWindow, !listPutAway {
-                Self.putAway(listWindow, label: "목록 창", log: log)
+            if !listPutAway {
+                Self.setHidden(true, kakao: kakao, log: log)
+                log("카카오톡 가리기")
             }
             if let terminal { SystemFocusProbe.activate(pid: terminal) }
         }
 
         // 0. Is this room in the list at all? Asked before anything is put on screen.
         //
-        // The handle it finds is NOT reusable. Measured: a row bound while the list is
-        // minimized still reports no frame 1.25 seconds after the window is back, so it
-        // never becomes clickable and the scan below has to fetch the row again. That is
-        // the whole of 9d03b24 — coordinates come only from an element taken while the
-        // window is on screen, and the click needs them because it is a screen-position
-        // mouse event, not something the row itself can be asked to do.
+        // A hidden window keeps its place, so the row found here already carries the
+        // coordinates the click will need — which a minimized one never does, being in
+        // the Dock. That is what lets the whole restore-and-wait-for-redraw-and-rescan
+        // stretch disappear: the expensive question is answered with nothing on screen.
         //
-        // What the answer is good for is not raising KakaoTalk over the user's screen to
-        // look for a room that demonstrably is not there. Sixty rows read and no match is
-        // an answer; one row read is a list that has not drawn yet and is not.
+        // The frame is still re-read before the click. The list reorders on every
+        // message, and AppKit reuses row views, so a handle that was right a moment ago
+        // can be showing a different room by the time KakaoTalk comes forward.
+        var presumed: UIElement?
         if let listWindow {
             let (count, found) = scanner.findRow(titled: title, in: listWindow, limit: 60)
-            log("사전 스캔 \(count)행 \(found == nil ? "— 그 방 없음" : "— 있음")")
+            log("사전 스캔 \(count)행 \(found == nil ? "— 그 방 없음" : "— 행 확보")")
             if found == nil, count > 2 {
                 return .openFailed(title: title, reason: "목록에서 그 방을 찾지 못했습니다")
             }
+            presumed = found
         }
 
-        // 1. Front. KakaoTalk has to be frontmost for a click to reach it, and the list
-        //    has to be out of the Dock before it can be raised.
+        // 1. Front. KakaoTalk has to be visible and frontmost for a click to reach it.
+        //    The un-minimize is for a list some older version, or the user, left in the
+        //    Dock; once kbbs hides rather than minimizes it is a no-op.
+        Self.setHidden(false, kakao: kakao, log: log)
         if let listWindow { _ = ListWindowRestore.restore(listWindow, log: log) }
 
         mailbox.deliver(.openingStep(title: title, step: 1), generation: currentGeneration)
@@ -416,7 +424,10 @@ final class AXWorker: @unchecked Sendable {
         //     against the live row: the list reorders on every message, so the row at a
         //     position is not necessarily the room that was there a moment ago.
         let row: UIElement
-        if let listWindow, let fresh = ListWindowRestore.rowAfterRestoring(
+        if let presumed, presumed.frame != nil, Self.row(presumed, stillShows: title) {
+            row = presumed
+            log("사전 스캔 행 사용")
+        } else if let listWindow, let fresh = ListWindowRestore.rowAfterRestoring(
             titled: title,
             listWindow: listWindow,
             scanner: scanner,
@@ -462,9 +473,8 @@ final class AXWorker: @unchecked Sendable {
         // mouseUp before it returns, and the pause below is margin on top of that for
         // KakaoTalk to hit-test them while the window is still where they were aimed.
         Thread.sleep(forTimeInterval: 0.15)
-        if let listWindow {
-            listPutAway = Self.putAway(listWindow, label: "목록 창", log: log)
-        }
+        listPutAway = Self.setHidden(true, kakao: kakao, log: log)
+        log("카카오톡 가리기")
 
         // 4. Wait for the window to actually appear, then resolve it like any other.
         mailbox.deliver(.openingStep(title: title, step: 4), generation: currentGeneration)
@@ -484,13 +494,12 @@ final class AXWorker: @unchecked Sendable {
             // a minimized window still reads, and still takes an injected composer value
             // with the 전송 button enabling.
             //
-            // The list is normally already away by now; this catches the one case where
-            // the attempt straight after the click did not take.
-            if let listWindow, !listPutAway {
-                listPutAway = Self.putAway(listWindow, label: "목록 창", log: log)
-            }
-            if let chatWindow = reader.window(titled: title) {
-                Self.putAway(chatWindow, label: "대화 창", log: log)
+            // Normally already away by now; this catches the case where the attempt
+            // straight after the click did not take. Hiding covers the new window too,
+            // so there is nothing to minimize per-window any more.
+            if !listPutAway {
+                listPutAway = Self.setHidden(true, kakao: kakao, log: log)
+                log("카카오톡 가리기")
             }
             // One resolve, not a loop of them. Looping repeated an expensive search that
             // had already failed for a reason, and the reason does not change in 50ms.
@@ -499,7 +508,6 @@ final class AXWorker: @unchecked Sendable {
             do {
                 let opened = try reader.open(title: title, within: 10)
                 log("열림 확인 「\(opened.matchedTitle)」")
-                Self.putAway(opened.window, label: "대화 창", log: log)
                 let token = nextToken
                 nextToken += 1
                 contexts[token] = opened
@@ -551,27 +559,29 @@ final class AXWorker: @unchecked Sendable {
     /// Whether this row element still displays the conversation it was found for.
     ///
     /// Cheap on purpose — a handful of queries against one row, next to a full re-scan.
-    /// Minimize a window, and check that it went.
+    /// Put KakaoTalk out of sight, and check that it went.
     ///
-    /// `AXMinimized` is settable, and setting it returns success whether or not anything
-    /// happened — the same lie as the 전송 button and the scroll actions. On a window
-    /// KakaoTalk has only just built the write lands on nothing, which is how a chat
-    /// window opened by kbbs was left sitting on the user's screen while the list beside
-    /// it, minimized by the identical call, went away.
+    /// Measured (spec §13, 2026-09-17): AXHidden on the application element settles in
+    /// about 25ms and takes every window with it, where minimizing cost 550-830ms per
+    /// window and needed two or three attempts. It also leaves the windows where they
+    /// are — a minimized window is in the Dock, and its rows report no coordinates at
+    /// all, which is why opening one used to mean restoring it and scanning again.
     ///
-    /// Returns as soon as the read-back agrees, so the common case costs one extra
-    /// attribute read and nothing else.
+    /// The write lies like every other settable attribute here: it reports success and
+    /// the next read returns the old value. Only the read-back settling is evidence.
     @discardableResult
-    static func putAway(_ window: UIElement, label: String, log: (String) -> Void) -> Bool {
-        for attempt in 1...3 {
-            try? window.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
-            if (window.attributeOptional(kAXMinimizedAttribute) ?? false) as Bool {
-                log("\(label) 최소화\(attempt > 1 ? " (\(attempt)번째)" : "")")
+    static func setHidden(_ hidden: Bool, kakao: KakaoTalkApp, log: (String) -> Void) -> Bool {
+        let app = kakao.applicationElement
+        let label = hidden ? "카카오톡 가리기" : "카카오톡 보이기"
+        try? app.setAttribute(kAXHiddenAttribute, value: hidden as CFBoolean)
+        let deadline = Date().addingTimeInterval(1.5)
+        while Date() < deadline {
+            if ((app.attributeOptional(kAXHiddenAttribute) ?? !hidden) as Bool) == hidden {
                 return true
             }
-            Thread.sleep(forTimeInterval: 0.12)
+            Thread.sleep(forTimeInterval: 0.02)
         }
-        log("\(label) 최소화 실패 — 창이 그대로 남음")
+        log("\(label) 반영 안 됨")
         return false
     }
 

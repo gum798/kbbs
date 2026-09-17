@@ -40,6 +40,7 @@ struct Kbbs: ParsableCommand {
             KeysCommand.self,
             ProbeMenuCommand.self,
             WindowsCommand.self,
+            ProbeHideCommand.self,
         ]
     )
 
