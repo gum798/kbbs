@@ -42,7 +42,7 @@ enum ListWindowRestore {
 
     /// Un-minimize if it was minimized, and say whether it was — the wait afterwards is
     /// only long when KakaoTalk has to redraw the whole list from nothing.
-    private static func restore(_ listWindow: UIElement, log: (String) -> Void) -> Bool {
+    static func restore(_ listWindow: UIElement, log: (String) -> Void = { _ in }) -> Bool {
         let wasMinimized = (listWindow.attributeOptional(kAXMinimizedAttribute) ?? false) as Bool
         if wasMinimized {
             try? listWindow.setAttribute(kAXMinimizedAttribute, value: false as CFBoolean)

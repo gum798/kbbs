@@ -349,43 +349,34 @@ final class AXWorker: @unchecked Sendable {
         // can land on it, and leaving it sitting over the user's screen afterwards is the
         // part they notice. Hiding the whole app does not work — NSRunningApplication.hide
         // on another process returns without hiding anything — so the list window is
-        // minimized, which does.
+        // minimized, which does. The net only fires if step 4 did not already get there.
+        var listPutAway = false
         defer {
-            if let listWindow {
+            if let listWindow, !listPutAway {
                 try? listWindow.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
                 log("목록 창 최소화")
             }
             if let terminal { SystemFocusProbe.activate(pid: terminal) }
         }
 
-        // It may have been minimized by a previous open; raising a minimized window does
-        // nothing, so it comes back first — and its rows are re-read once it has redrawn,
-        // because the ones held from before point at where it used to be.
-        // Bound only now, and only this one. A row handle captured while the list was
-        // minimized reports no frame at all, and the coordinate guard then refuses a
-        // click it should have been able to make — the list reorders on every message,
-        // so the handle has to come from the scan that just ran, not from whatever was
-        // held before. Reading the other fifty-nine rows to get at this one was most of
-        // what an open cost.
-        let restored = listWindow.flatMap { window in
-            ListWindowRestore.rowAfterRestoring(
-                titled: title,
-                listWindow: window,
-                scanner: scanner,
-                limit: 60,
-                log: log
-            )
-        }
-        guard let row = restored ?? rows[title] else {
-            log("실패: 행 없음")
-            return .openFailed(title: title, reason: "목록에서 그 방을 찾지 못했습니다")
-        }
-        guard Self.row(row, stillShows: title) else {
-            log("실패: 행이 다른 방을 표시함")
-            return .openFailed(title: title, reason: "목록이 바뀌었습니다. R 로 새로고침하세요")
+        // 0. Which row, asked while the list is still out of sight.
+        //
+        // A minimized window answers what its rows SAY but not where they ARE — a handle
+        // bound there reports frame=nil, which is the bug 9d03b24 fixed by moving the
+        // binding after the restore. Moving the whole scan after the restore was the
+        // wrong lesson from that: only the frame has to wait. So the expensive question
+        // is settled here, off-screen, and the frame is taken again below once the list
+        // is up. If this comes back empty nothing is lost — the path below still runs.
+        let presumed = listWindow.flatMap { window -> UIElement? in
+            let (count, found) = scanner.findRow(titled: title, in: window, limit: 60)
+            log("사전 스캔 \(count)행 \(found == nil ? "— 그 방 없음" : "— 행 확보")")
+            return found
         }
 
-        // 1. Front. KakaoTalk has to be frontmost for a click to reach it.
+        // 1. Front. KakaoTalk has to be frontmost for a click to reach it, and the list
+        //    has to be out of the Dock before it can be raised.
+        if let listWindow { _ = ListWindowRestore.restore(listWindow, log: log) }
+
         mailbox.deliver(.openingStep(title: title, step: 1), generation: currentGeneration)
         kakao.activateForSend()
         let kakaoPID = KakaoTalkApp.runningApplication?.processIdentifier
@@ -406,6 +397,31 @@ final class AXWorker: @unchecked Sendable {
             try? listWindow.performAction(kAXRaiseAction)
             Thread.sleep(forTimeInterval: 0.2)
         }
+        // 2b. Bind the row, now that there is a frame to bind. The pre-scan's handle is
+        //     kept if it still has a frame and still shows this room — the list reorders
+        //     on every message, so that is not a formality. Otherwise the list is read
+        //     again, which is what this used to do every single time.
+        let row: UIElement
+        if let presumed, presumed.frame != nil, Self.row(presumed, stillShows: title) {
+            row = presumed
+            log("사전 스캔 행 사용")
+        } else if let listWindow, let fresh = ListWindowRestore.rowAfterRestoring(
+            titled: title,
+            listWindow: listWindow,
+            scanner: scanner,
+            limit: 60,
+            log: log
+        ), Self.row(fresh, stillShows: title) {
+            row = fresh
+            log("재스캔 행 사용")
+        } else if let held = rows[title], held.frame != nil, Self.row(held, stillShows: title) {
+            row = held
+            log("보유 행 사용")
+        } else {
+            log("실패: 행 없음")
+            return .openFailed(title: title, reason: "목록에서 그 방을 찾지 못했습니다")
+        }
+
         // A row that has scrolled out of sight still has a frame — below the window, on
         // the desktop — so it has to be brought into view before its coordinates mean
         // anything. This is what made every room past the visible dozen unopenable.
@@ -436,7 +452,19 @@ final class AXWorker: @unchecked Sendable {
             // full resolve. A resolve against a window that has not appeared yet walks
             // the app twice — once to miss, once to list what it saw instead — and this
             // loop used to do that twenty-five times before giving up.
-            if reader.window(titled: title) != nil, let opened = try? reader.open(title: title) {
+            guard reader.window(titled: title) != nil else {
+                Thread.sleep(forTimeInterval: 0.05)
+                continue
+            }
+            // The window exists, so the click landed — which is the proof needed to put
+            // the list away. Doing it here rather than in the defer takes it off the
+            // screen before the resolve below, which is the slow half of this.
+            if let listWindow, !listPutAway {
+                try? listWindow.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
+                listPutAway = true
+                log("목록 창 최소화")
+            }
+            if let opened = try? reader.open(title: title) {
                 // Measured: a minimized window still reads, and still takes an injected
                 // composer value with the 전송 button enabling. So the window kbbs had to
                 // bring up gets put away again immediately instead of piling onto the
