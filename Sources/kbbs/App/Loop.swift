@@ -143,7 +143,11 @@ struct Loop {
             list.page = min(list.page, list.pageCount - 1)
             list.cursor = min(list.cursor, max(0, list.roomsOnPage - 1))
             list.link = .live(lastRefresh: Date())
-            if source != .chatList { say("열린 창만") } else { list.note = nil }
+            if source != .chatList {
+                say("열린 창만")
+            } else if queued.isEmpty {
+                list.note = nil
+            }
             nextListPoll = Date().addingTimeInterval(Self.listPoll)
 
         case .opened(let token, let title, let matched, _):
@@ -285,7 +289,12 @@ struct Loop {
     private mutating func submit(_ job: AXJob) {
         guard let worker else { return }
         guard !axBusy else {
-            if Self.isUserRequested(job) { queued.append(job) }
+            if Self.isUserRequested(job) {
+                if case .openRoom = job {
+                    queued.removeAll(where: { if case .openRoom = $0 { return true } else { return false } })
+                }
+                queued.append(job)
+            }
             return
         }
         axBusy = true
@@ -305,7 +314,11 @@ struct Loop {
     /// What the user asked for goes before anything the timers want.
     private mutating func dispatchQueued() {
         guard !axBusy, !queued.isEmpty else { return }
-        submit(queued.removeFirst())
+        let job = queued.removeFirst()
+        if case .openRoom(let title) = job {
+            say("「\(title)」 여는 중…")
+        }
+        submit(job)
     }
 
     /// The user changed their mind. Anything in flight still runs to completion on the
@@ -370,6 +383,10 @@ struct Loop {
         case .escape:
             list.clearNumberBuffer()
             bufferTouchedAt = nil
+            queued.removeAll(where: { if case .openRoom = $0 { return true } else { return false } })
+            if list.note?.hasSuffix("여는 중…") == true {
+                list.note = nil
+            }
         case .enter:
             openSelectedRoom()
         case .char(let c) where c.isNumber:
@@ -542,10 +559,6 @@ struct Loop {
 
         guard worker != nil else {
             say("예시 모드에서는 대화를 열 수 없습니다")
-            return
-        }
-        guard !axBusy else {
-            say("[대기중] 카카오톡을 읽고 있습니다")
             return
         }
         say("「\(room.title)」 여는 중…")
