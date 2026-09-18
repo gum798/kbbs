@@ -359,12 +359,12 @@ final class AXWorker: @unchecked Sendable {
         // Put KakaoTalk back out of sight: it is brought forward only so the click can
         // land, and leaving it over the user's screen afterwards is the part they notice.
         // The whole application is hidden rather than its windows minimized one at a
-        // time — see setHidden. The net only fires if the click step did not get there.
-        var listPutAway = false
+        // time — see setHidden. Unconditionally hides on any exit path (success or failure).
         defer {
-            if !listPutAway {
-                Self.setHidden(true, kakao: kakao, log: log)
-                log("카카오톡 가리기")
+            if !Self.setHidden(true, kakao: kakao, log: log) {
+                if let listWindow {
+                    try? listWindow.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
+                }
             }
             if let terminal { SystemFocusProbe.activate(pid: terminal) }
         }
@@ -473,8 +473,7 @@ final class AXWorker: @unchecked Sendable {
         // mouseUp before it returns, and the pause below is margin on top of that for
         // KakaoTalk to hit-test them while the window is still where they were aimed.
         Thread.sleep(forTimeInterval: 0.15)
-        listPutAway = Self.setHidden(true, kakao: kakao, log: log)
-        log("카카오톡 가리기")
+        Self.setHidden(true, kakao: kakao, log: log)
 
         // 4. Wait for the window to actually appear, then resolve it like any other.
         mailbox.deliver(.openingStep(title: title, step: 4), generation: currentGeneration)
@@ -488,19 +487,11 @@ final class AXWorker: @unchecked Sendable {
                 Thread.sleep(forTimeInterval: 0.05)
                 continue
             }
-            // The window exists, so the click landed. That is the proof needed to put
-            // both windows away, and it comes before the resolve rather than after it —
-            // the resolve is the slow half and neither window is needed for it. Measured:
-            // a minimized window still reads, and still takes an injected composer value
-            // with the 전송 button enabling.
-            //
-            // Normally already away by now; this catches the case where the attempt
-            // straight after the click did not take. Hiding covers the new window too,
-            // so there is nothing to minimize per-window any more.
-            if !listPutAway {
-                listPutAway = Self.setHidden(true, kakao: kakao, log: log)
-                log("카카오톡 가리기")
-            }
+            // The window exists, so the click landed. When KakaoTalk creates and shows
+            // the new chat window, AppKit brings it forward and unhides the application.
+            // Hide the application again immediately so the new window does not linger.
+            Self.setHidden(true, kakao: kakao, log: log)
+
             // One resolve, not a loop of them. Looping repeated an expensive search that
             // had already failed for a reason, and the reason does not change in 50ms.
             // The pause first is for a window KakaoTalk has made but not yet filled.
@@ -508,6 +499,11 @@ final class AXWorker: @unchecked Sendable {
             do {
                 let opened = try reader.open(title: title, within: 10)
                 log("열림 확인 「\(opened.matchedTitle)」")
+                // Re-hide KakaoTalk in case window completion unhid the application again;
+                // fallback to minimizing the window if hiding was rejected.
+                if !Self.setHidden(true, kakao: kakao, log: log) {
+                    try? opened.window.setAttribute(kAXMinimizedAttribute, value: true as CFBoolean)
+                }
                 let token = nextToken
                 nextToken += 1
                 contexts[token] = opened
@@ -572,7 +568,15 @@ final class AXWorker: @unchecked Sendable {
     @discardableResult
     static func setHidden(_ hidden: Bool, kakao: KakaoTalkApp, log: (String) -> Void) -> Bool {
         let app = kakao.applicationElement
+        if ((app.attributeOptional(kAXHiddenAttribute) ?? !hidden) as Bool) == hidden {
+            return true
+        }
         let label = hidden ? "카카오톡 가리기" : "카카오톡 보이기"
+        if hidden {
+            _ = KakaoTalkApp.runningApplication?.hide()
+        } else {
+            _ = KakaoTalkApp.runningApplication?.unhide()
+        }
         try? app.setAttribute(kAXHiddenAttribute, value: hidden as CFBoolean)
         let deadline = Date().addingTimeInterval(1.5)
         while Date() < deadline {
