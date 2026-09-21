@@ -85,7 +85,8 @@ enum ChatTextNormalizer {
     /// KakaoTalk caps the badge at "999+", where the true count is unknowable, so the
     /// floor is the honest reading. A room with nothing unread has no badge at all,
     /// so a literal "0" is something else and is rejected.
-    static func unreadCount(from value: String) -> Int? {
+    static func unreadCount(from value: String, identifier: String? = nil) -> Int? {
+        guard identifier != "_NS:40", identifier != "_NS:69" else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isUnreadCountLike(trimmed) else { return nil }
         let digits = trimmed.filter(\.isNumber)
@@ -97,6 +98,14 @@ enum ChatTextNormalizer {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         return trimmed.allSatisfy { $0.isNumber || $0 == "+" || $0 == "," }
+    }
+
+    static func isTitleText(_ value: String, identifier: String?) -> Bool {
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        // A real room named "16" uses _NS:40; its unread badge is a separate Count Label.
+        if identifier == "_NS:40" { return true }
+        if identifier == "Count Label" || identifier == "_NS:69" { return false }
+        return !isTimeLikeValue(value) && !isUnreadCountLike(value)
     }
 }
 
@@ -312,9 +321,10 @@ struct ChatListScanner {
         }
         // Some rows expose the badge without the identifier; fall back to shape.
         for node in nodes {
-            guard node.identifier != "Count Label" else { continue }
+            let identifier = node.identifier
+            guard identifier != "Count Label" else { continue }
             guard let text = normalizedText(node.stringValue) ?? normalizedText(node.title) else { continue }
-            if let count = ChatTextNormalizer.unreadCount(from: text) {
+            if let count = ChatTextNormalizer.unreadCount(from: text, identifier: identifier) {
                 return count
             }
         }
@@ -367,11 +377,12 @@ struct ChatListScanner {
     }
 
     private func titleText(from element: UIElement) -> String? {
-        if let title = normalizedText(element.title), !ChatTextNormalizer.isTimeLikeValue(title), !ChatTextNormalizer.isUnreadCountLike(title) {
+        let identifier = element.identifier
+        if let title = normalizedText(element.title), ChatTextNormalizer.isTitleText(title, identifier: identifier) {
             return title
         }
 
-        if element.identifier == "Count Label" {
+        if identifier == "Count Label" {
             return nil
         }
 
@@ -382,7 +393,7 @@ struct ChatListScanner {
             break
         }
 
-        if let value = normalizedText(element.stringValue), !ChatTextNormalizer.isTimeLikeValue(value), !ChatTextNormalizer.isUnreadCountLike(value) {
+        if let value = normalizedText(element.stringValue), ChatTextNormalizer.isTitleText(value, identifier: identifier) {
             return value
         }
 

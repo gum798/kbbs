@@ -7,6 +7,25 @@ import XCTest
 /// against the real app instead.
 final class ChatListParsingTests: XCTestCase {
 
+    func testNumericRoomTitlesAreNotDiscardedAsUnreadCounts() {
+        for title in ["16", "18", "01", "09", "0"] {
+            XCTAssertTrue(ChatTextNormalizer.isTitleText(title, identifier: "_NS:40"), title)
+        }
+    }
+
+    func testMetadataCannotBecomeARoomTitle() {
+        XCTAssertFalse(ChatTextNormalizer.isTitleText("2", identifier: "Count Label"))
+        XCTAssertFalse(ChatTextNormalizer.isTitleText("오전 10:43", identifier: "_NS:69"))
+        XCTAssertFalse(ChatTextNormalizer.isTitleText("16", identifier: nil))
+        XCTAssertTrue(ChatTextNormalizer.isTitleText("테스트방", identifier: nil))
+    }
+
+    func testNumericRoomTitleIsNotAnUnreadBadgeWhenBadgeIsAbsent() {
+        XCTAssertNil(ChatTextNormalizer.unreadCount(from: "16", identifier: "_NS:40"))
+        XCTAssertEqual(ChatTextNormalizer.unreadCount(from: "2", identifier: "Count Label"), 2)
+        XCTAssertEqual(ChatTextNormalizer.unreadCount(from: "3", identifier: nil), 3)
+    }
+
     // MARK: - Unread badge
 
     func testPlainCountParses() {
