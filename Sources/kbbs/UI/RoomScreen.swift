@@ -17,10 +17,33 @@ struct RoomState {
     var pending: [PendingLedger.Entry] = []
     /// How many of the last messages arrived while this screen was open.
     var newCount = 0
+    /// Keep browsing stable while newer reads replace the live message list.
+    var selection: MessageSelection?
+
+    var displayedMessages: [TranscriptMessage] { selection?.messages ?? messages }
+
+    mutating func moveSelection(by offset: Int) {
+        guard var current = selection else {
+            guard offset < 0, !messages.isEmpty else { return }
+            selection = MessageSelection(messages: messages, index: messages.count - 1)
+            return
+        }
+        if current.index + offset >= current.messages.count {
+            selection = nil
+            return
+        }
+        current.index = max(0, current.index + offset)
+        selection = current
+    }
 
     init(title: String) {
         self.title = title
     }
+}
+
+struct MessageSelection {
+    let messages: [TranscriptMessage]
+    var index: Int
 }
 
 /// The conversation, as one fixed panel.
@@ -94,14 +117,26 @@ enum RoomScreen {
 
     private static func transcriptLines(_ state: RoomState) -> [String] {
         var lines: [String] = []
-        let firstNew = state.messages.count - min(state.newCount, state.messages.count)
-        for (index, message) in state.messages.enumerated() {
-            lines.append(contentsOf: messageLines(message, isNew: index >= firstNew && state.newCount > 0))
+        var selectedRange: Range<Int>?
+        let messages = state.displayedMessages
+        let firstNew = messages.count - min(state.newCount, messages.count)
+        for (index, message) in messages.enumerated() {
+            let selected = state.selection?.index == index
+            let start = lines.count
+            let rendered = messageLines(message,
+                isNew: state.selection == nil && index >= firstNew && state.newCount > 0)
+            lines.append(contentsOf: selected ? rendered.map(Theme.reversed) : rendered)
+            if selected { selectedRange = start..<lines.count }
         }
         for entry in state.pending {
             lines.append(contentsOf: pendingLines(entry))
         }
         let capacity = transcriptRows.count
+        if let selectedRange {
+            // For a message taller than the panel, keep its beginning visible.
+            let start = max(0, min(selectedRange.lowerBound, selectedRange.upperBound - capacity))
+            return Array(lines.dropFirst(start).prefix(capacity))
+        }
         guard lines.count > capacity else { return lines }
         return Array(lines.suffix(capacity))
     }
@@ -201,7 +236,9 @@ enum RoomScreen {
         if let note = state.note, !note.isEmpty {
             left = "  " + Width.elide(note, to: inner - Width.cells(right) - 4)
         } else {
-            left = "  Enter:전송  ⌥Enter:줄바꿈  Esc:목록  S:창보기  W:창닫기  Q:종료"
+            left = state.selection == nil
+                ? "  ↑↓:대화보기  Enter:전송  Esc:목록  S:창보기  W:창닫기  Q:종료"
+                : "  ↑↓:대화보기  ↓끝:선택해제  Esc:선택해제  Enter:전송"
         }
         let gap = max(1, inner - Width.cells(left) - Width.cells(right))
         return left + String(repeating: " ", count: gap) + right

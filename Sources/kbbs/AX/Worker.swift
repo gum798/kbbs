@@ -167,19 +167,27 @@ final class Watchdog: @unchecked Sendable {
 /// The main thread never calls Accessibility — not one call, not even to count windows.
 /// It submits jobs and reads values back. Live handles stay here, in `contexts`, keyed by
 /// an integer the main thread passes around instead.
-final class AXWorker: @unchecked Sendable {
+protocol AXWorking {
+    func running() -> Watchdog.Running?
+    func collect(generation: Int) -> [AXResult]
+    func submit(_ job: AXJob, generation: Int)
+    func release(token: Int)
+}
+
+final class AXWorker: AXWorking, @unchecked Sendable {
     private let queue = DispatchQueue(label: "kbbs.ax")
     private let mailbox = Mailbox()
     private let watchdog = Watchdog()
 
-    private let kakao: KakaoTalkApp
-    private let reader: RoomReader
+    private var kakao: KakaoTalkApp
+    private var reader: RoomReader
     /// Only the window-opening job uses this, and only for the double-click.
     private let runner: AXActionRunner
     private let scanner = ChatListScanner()
     /// nil when kbbs was started straight into one room, which needs no list.
-    private let listWindow: UIElement?
+    private var listWindow: UIElement?
     private let trace: Bool
+    private var reconnectBeforeRead = false
 
     /// Worker-side only. The main thread sees an Int and nothing else.
     private var contexts: [Int: RoomReader.Opened] = [:]
@@ -211,6 +219,12 @@ final class AXWorker: @unchecked Sendable {
             watchdog.began(label: Self.label(for: job))
             let started = Date()
             let result = perform(job, started: started)
+            if case .failed = result {
+                reconnectBeforeRead = true
+                contexts.removeAll()
+                rows.removeAll()
+                listWindow = nil
+            }
             watchdog.finished()
             mailbox.deliver(result, generation: generation, sticky: Self.mustBeHeard(result))
         }
@@ -237,14 +251,32 @@ final class AXWorker: @unchecked Sendable {
     }
 
     private func perform(_ job: AXJob, started: Date) -> AXResult {
+        if reconnectBeforeRead {
+            switch job {
+            case .scanList, .openRoom, .readRoom:
+                do {
+                    // Locking can invalidate both the application and its window handles.
+                    kakao = try KakaoTalkApp()
+                    reader = RoomReader(kakao: kakao, trace: trace)
+                    listWindow = kakao.chatListWindow.flatMap { $0.role == kAXWindowRole ? $0 : nil }
+                    reconnectBeforeRead = false
+                    TTYOut.log("[reconnect] 앱·창 연결 다시 조회")
+                } catch {
+                    return .failed(reason: "카카오톡이 실행 중인지 확인해 주세요")
+                }
+            default:
+                break
+            }
+        }
         switch job {
         case .scanList(let limit):
             // The chat list window can be closed at any moment — closing it does not quit
             // KakaoTalk — so a refresh that assumed it was still there would empty the
             // board index the moment the user closed one window.
-            let window = listWindow ?? kakao.chatListWindow.flatMap { candidate in
+            let window = kakao.chatListWindow.flatMap { candidate in
                 candidate.role == kAXWindowRole ? candidate : nil
             }
+            listWindow = window
             let found = window.map { scanner.scan(in: $0, limit: limit, trace: nil) } ?? []
 
             if !found.isEmpty, let window {
@@ -267,7 +299,7 @@ final class AXWorker: @unchecked Sendable {
                 titles: kakao.windows.compactMap { $0.role == kAXWindowRole ? $0.title : nil },
                 listWindowTitle: window?.title ?? "카카오톡"
             )
-            guard !fallback.isEmpty else { return .failed(reason: "카카오톡 창이 하나도 열려 있지 않습니다") }
+            guard !fallback.isEmpty else { return .failed(reason: "카카오톡에서 읽을 수 있는 창을 찾지 못했습니다") }
             return .list(rooms: fallback, source: .openWindowsOnly, elapsed: Date().timeIntervalSince(started))
 
         case .openRoom(let title):
@@ -294,9 +326,14 @@ final class AXWorker: @unchecked Sendable {
             }
 
         case .readRoom(let token, let title, let limit):
-            guard let opened = contexts[token] else {
-                return .failed(reason: "대화방 연결이 끊겼습니다")
+            if contexts[token] == nil {
+                do {
+                    contexts[token] = try reader.open(title: title, within: 8)
+                } catch {
+                    return .failed(reason: "「\(title)」 창을 다시 읽지 못했습니다")
+                }
             }
+            guard let opened = contexts[token] else { return .failed(reason: "대화방 연결이 끊겼습니다") }
             guard let read = reader.read(opened, title: title, limit: limit) else {
                 // The context may have gone stale — the window was closed or reused.
                 contexts[token] = nil

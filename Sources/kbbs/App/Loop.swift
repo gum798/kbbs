@@ -25,16 +25,16 @@ struct Loop {
     /// so a few more than that is everything it can possibly show.
     private static let roomReadLimit = RoomScreen.visibleLines + 4
 
-    private enum Screen { case list, room, waiting, confirm, blocked }
+    enum Screen { case list, room, waiting, confirm, blocked }
 
     private struct WaitingState {
         let title: String
         var since: Date
     }
 
-    private var screen: Screen = .list
-    private var list = ListState()
-    private var roomState: RoomState?
+    private(set) var screen: Screen = .list
+    private(set) var list = ListState()
+    private(set) var roomState: RoomState?
     private var waiting: WaitingState?
 
     private var decoder = KeyDecoder()
@@ -64,22 +64,25 @@ struct Loop {
     /// round again on its own; a key someone pressed does not, and dropping it silently
     /// is why closing a window took two presses.
     private var queued: [AXJob] = []
-    private var blocked: BlockedState?
+    private(set) var blocked: BlockedState?
     private var lastGoodRead: Date?
 
-    private let worker: AXWorker?
+    private let worker: (any AXWorking)?
+    private let permissionGranted: () -> Bool
     private let readLimit: Int
     private let demoRescan: (() -> [Room])?
 
     init(
         rooms: [Room],
         link: LinkState,
-        worker: AXWorker?,
+        worker: (any AXWorking)?,
         readLimit: Int = 60,
         source: ListSource = .chatList,
-        demoRescan: (() -> [Room])? = nil
+        demoRescan: (() -> [Room])? = nil,
+        permissionGranted: @escaping () -> Bool = AccessibilityPermission.isGranted
     ) {
         self.worker = worker
+        self.permissionGranted = permissionGranted
         self.readLimit = readLimit
         self.demoRescan = demoRescan
         list.rooms = rooms
@@ -113,13 +116,17 @@ struct Loop {
 
             if RawMode.takeResize() { lastFrame = [] }
 
-            drainResults()
-            expireTimers()
-            serviceTimers()
-            applyDelayTier()
-            tickClocks()
+            tick()
             paint()
         }
+    }
+
+    mutating func tick(now: Date = Date()) {
+        drainResults()
+        expireTimers()
+        serviceTimers(now: now)
+        applyDelayTier()
+        tickClocks(now: now)
     }
 
     // MARK: - Results
@@ -138,6 +145,14 @@ struct Loop {
     private mutating func apply(_ result: AXResult) {
         switch result {
         case .list(let rooms, let source, _):
+            readFailures = 0
+            lastGoodRead = Date()
+            if screen == .blocked {
+                blocked = nil
+                screen = .list
+                nextRoomPoll = nil
+                lastFrame = []
+            }
             list.rooms = rooms
             list.source = source
             list.page = min(list.page, list.pageCount - 1)
@@ -260,7 +275,7 @@ struct Loop {
                     lastGoodRead: lastGoodRead,
                     retryIn: wait,
                     clock: Date(),
-                    permissionLost: !AccessibilityPermission.isGranted()
+                    permissionLost: !permissionGranted()
                 )
                 screen = .blocked
                 nextRoomPoll = Date().addingTimeInterval(wait)
@@ -330,9 +345,9 @@ struct Loop {
 
     // MARK: - Keys
 
-    private enum Outcome { case carryOn, quit }
+    enum Outcome { case carryOn, quit }
 
-    private mutating func handle(_ key: Key) -> Outcome {
+    mutating func handle(_ key: Key) -> Outcome {
         switch screen {
         case .list: return handleList(key)
         case .room: return handleRoom(key)
@@ -398,9 +413,7 @@ struct Loop {
         return .carryOn
     }
 
-    /// Reading only. Typing fills the composer but Enter does not send: the send machine
-    /// is M6, and a key that looks like it sent but did not is the worst lie this program
-    /// could tell.
+    /// Browse the loaded conversation while the composer keeps its ordinary send behavior.
     private mutating func handleRoom(_ key: Key) -> Outcome {
         guard var room = roomState else { return .carryOn }
         let composerEmpty = room.composer.isEmpty
@@ -432,7 +445,16 @@ struct Loop {
         }
 
         switch key {
+        case .up:
+            room.moveSelection(by: -1)
+        case .down:
+            room.moveSelection(by: 1)
         case .escape:
+            if room.selection != nil {
+                room.selection = nil
+                roomState = room
+                return .carryOn
+            }
             leaveRoom()
             return .carryOn
         case .backspace:
@@ -513,9 +535,7 @@ struct Loop {
         case .quit:
             return .quit
         case .refresh:
-            if let token = roomToken, let title = roomState?.title, !axBusy {
-                submit(.readRoom(token: token, title: title, limit: Self.roomReadLimit))
-            }
+            retryConnection()
         case .repaint:
             lastFrame = []
         default:
@@ -526,6 +546,16 @@ struct Loop {
             }
         }
         return .carryOn
+    }
+
+    private mutating func retryConnection() {
+        guard !axBusy, worker != nil, blocked?.permissionLost != true else { return }
+        if let token = roomToken, let title = roomState?.title {
+            submit(.readRoom(token: token, title: title, limit: Self.roomReadLimit))
+        } else {
+            submit(.scanList(limit: readLimit))
+        }
+        nextRoomPoll = nil
     }
 
     private mutating func handleWaiting(_ key: Key) -> Outcome {
@@ -598,10 +628,13 @@ struct Loop {
 
     // MARK: - Timers
 
-    private mutating func serviceTimers() {
-        let now = Date()
+    private mutating func serviceTimers(now: Date) {
+        if screen == .blocked {
+            if let due = nextRoomPoll, now >= due { retryConnection() }
+            return
+        }
 
-        if (screen == .room || screen == .blocked), let due = nextRoomPoll, now >= due, !axBusy, let token = roomToken,
+        if screen == .room, let due = nextRoomPoll, now >= due, !axBusy, let token = roomToken,
            let title = roomState?.title {
             submit(.readRoom(token: token, title: title, limit: Self.roomReadLimit))
             nextRoomPoll = now.addingTimeInterval(Self.roomPoll)
@@ -666,11 +699,11 @@ struct Loop {
         }
     }
 
-    private mutating func tickClocks() {
-        let now = Date()
+    private mutating func tickClocks(now: Date) {
         list.clock = now
         roomState?.clock = now
         blocked?.clock = now
+        blocked?.retryIn = nextRoomPoll.map { max(0, $0.timeIntervalSince(now)) } ?? 0
     }
 
     // MARK: - Painting
